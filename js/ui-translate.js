@@ -463,6 +463,11 @@ inputEl.addEventListener('drop', async e=>{
   const dt = e.dataTransfer;
   const files = Array.from(dt.files||[]);
   const nonImageFiles = files.filter(f=>!(f.type && f.type.startsWith('image/')));
+  if (files.length && files.length !== nonImageFiles.length){
+    e.stopImmediatePropagation();
+    await addImagesFromFiles(files, '拖拽');
+    return;
+  }
   await addImagesFromFiles(files, '拖拽');
   if (nonImageFiles.length){
     const f = nonImageFiles[0];
@@ -527,9 +532,10 @@ inputEl.addEventListener('paste', e=>{
   const dataUrlImages = extractDataUrlImagesFromHtml(html);
   if (files.length || dataUrlImages.length){
     e.preventDefault();
-    e.stopPropagation();
+    e.stopImmediatePropagation();
     if (files.length){ addImagesFromFiles(files, '粘贴'); }
     else { addImagesFromDataUrls(dataUrlImages, '粘贴'); }
+    return;
   }
 });
 
