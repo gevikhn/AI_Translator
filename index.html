@@ -31,6 +31,14 @@
         <button id="btnCopy" class="btn">复制</button>
         <nav><button id="openSettings" class="btn">设置</button></nav>
       </div>
+      <div class="attachment-bar" aria-label="图片输入">
+        <div class="btn-row" style="align-items:center">
+          <button id="btnAddImage" class="btn" type="button">添加图片</button>
+          <span id="visionHint" class="status" aria-live="polite"></span>
+        </div>
+        <input type="file" id="imagePicker" accept="image/*" multiple hidden />
+        <div id="imageList" class="attachment-list" aria-live="polite"></div>
+      </div>
     </section>
     <section class="panes">
       <div class="pane">
@@ -94,6 +102,7 @@
             <label>Base URL <input name="baseUrl" data-field="baseUrl" placeholder="https://api.openai.com/v1" required /></label>
             <label>API Key <input name="apiKey" data-field="apiKey" type="password" placeholder="sk-..." autocomplete="off" /></label>
             <label>模型 <input name="model" data-field="model" placeholder="gpt-4o-mini / claude-3-5-sonnet" /></label>
+            <label>视觉（图片输入） <input type="checkbox" name="vision" data-field="vision" /></label>
           </fieldset>
         <fieldset><legend>高级</legend>
           <label>流式输出 <input type="checkbox" name="stream" data-field="stream"/></label>
