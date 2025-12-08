@@ -147,6 +147,13 @@ function parseDataTransferImages(fileList){
   return Array.from(fileList||[]).filter(f=>f && f.type && f.type.startsWith('image/'));
 }
 
+function detectImagesFromEventData(dt){
+  const files = parseDataTransferImages(dt?.files||[]);
+  const html = typeof dt?.getData === 'function' ? (dt.getData('text/html') || '') : '';
+  const dataUrlImages = extractDataUrlImagesFromHtml(html);
+  return { files, dataUrlImages };
+}
+
 function extractDataUrlImagesFromHtml(html){
   if (!html || typeof DOMParser === 'undefined') return [];
   const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -457,18 +464,22 @@ window.addEventListener('keydown', e=>{
 });
 
 // 拖拽 txt 文件或文本内容
-inputEl.addEventListener('dragover', e=>{ e.preventDefault(); });
+inputEl.addEventListener('dragover', e=>{ e.preventDefault(); }, true);
 inputEl.addEventListener('drop', async e=>{
-  e.preventDefault();
-  const dt = e.dataTransfer;
-  const files = Array.from(dt.files||[]);
-  const nonImageFiles = files.filter(f=>!(f.type && f.type.startsWith('image/')));
-  if (files.length && files.length !== nonImageFiles.length){
-    e.stopImmediatePropagation();
-    await addImagesFromFiles(files, '拖拽');
+  const { files, dataUrlImages } = detectImagesFromEventData(e.dataTransfer);
+  if (files.length || dataUrlImages.length){
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation?.();
+    if (files.length){ await addImagesFromFiles(files, '拖拽'); }
+    else { await addImagesFromDataUrls(dataUrlImages, '拖拽'); }
     return;
   }
-  await addImagesFromFiles(files, '拖拽');
+  e.preventDefault();
+  const dt = e.dataTransfer;
+  const fileList = Array.from(dt.files||[]);
+  const nonImageFiles = fileList.filter(f=>!(f.type && f.type.startsWith('image/')));
+  await addImagesFromFiles(fileList, '拖拽');
   if (nonImageFiles.length){
     const f = nonImageFiles[0];
     if (f.size > MAX_FILE_BYTES){
@@ -524,20 +535,19 @@ inputEl.addEventListener('drop', async e=>{
   if (text){
     if (text.length > MAX_INPUT_CHARS){ setStatus(`内容过大（>${MAX_INPUT_CHARS.toLocaleString()} 字符）`); return; }
     setInputText(text); setStatus('文本已载入'); }
-});
+}, true);
 
-inputEl.addEventListener('paste', e=>{
-  const files = parseDataTransferImages(e.clipboardData?.files||[]);
-  const html = e.clipboardData?.getData('text/html') || '';
-  const dataUrlImages = extractDataUrlImagesFromHtml(html);
+inputEl.addEventListener('paste', async e=>{
+  const { files, dataUrlImages } = detectImagesFromEventData(e.clipboardData);
   if (files.length || dataUrlImages.length){
     e.preventDefault();
-    e.stopImmediatePropagation();
-    if (files.length){ addImagesFromFiles(files, '粘贴'); }
-    else { addImagesFromDataUrls(dataUrlImages, '粘贴'); }
+    e.stopPropagation();
+    e.stopImmediatePropagation?.();
+    if (files.length){ await addImagesFromFiles(files, '粘贴'); }
+    else { await addImagesFromDataUrls(dataUrlImages, '粘贴'); }
     return;
   }
-});
+}, true);
 
 btnAddImage?.addEventListener('click', ()=>{
   if (!isVisionEnabled()){ setStatus('当前服务未启用视觉，无法上传图片'); return; }
