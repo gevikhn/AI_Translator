@@ -477,6 +477,7 @@ inputEl.addEventListener('drop', async e=>{
 inputEl.addEventListener('paste', e=>{
   const files = parseDataTransferImages(e.clipboardData?.files||[]);
   if (files.length){
+    e.preventDefault();
     addImagesFromFiles(files, '粘贴');
   }
 });
