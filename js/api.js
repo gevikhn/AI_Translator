@@ -45,7 +45,7 @@ function buildResponsesContent(userText, images){
   const content = [];
   if (userText || !images.length) content.push({ type:'input_text', text: userText });
   for (const img of normalizeImages(images)){
-    content.push({ type:'input_image', image_url: { url: img.dataUrl } });
+    content.push({ type:'input_image', image_url: img.dataUrl });
   }
   return content;
 }
@@ -73,8 +73,9 @@ function responsesContentToChat(content){
   const out = [];
   for (const item of content||[]){
     if (item?.type === 'input_text') out.push({ type:'text', text: item.text || '' });
-    else if (item?.type === 'input_image' && item.image_url?.url){
-      out.push({ type:'image_url', image_url:{ url: item.image_url.url } });
+    else if (item?.type === 'input_image' && (item.image_url || item.image_url?.url)){
+      const url = typeof item.image_url === 'string' ? item.image_url : item.image_url.url;
+      out.push({ type:'image_url', image_url:{ url } });
     }
   }
   return out;
