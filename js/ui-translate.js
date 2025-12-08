@@ -147,6 +147,26 @@ function parseDataTransferImages(fileList){
   return Array.from(fileList||[]).filter(f=>f && f.type && f.type.startsWith('image/'));
 }
 
+function extractDataUrlImagesFromHtml(html){
+  if (!html || typeof DOMParser === 'undefined') return [];
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const imgs = Array.from(doc.images||[]);
+  return imgs
+    .map(img=>img?.src||'')
+    .filter(src=>src.startsWith('data:image/'));
+}
+
+function dataUrlToMeta(dataUrl){
+  if (!dataUrl || !dataUrl.startsWith('data:image/')) return null;
+  const [header, base64] = dataUrl.split(',', 2);
+  if (!base64) return null;
+  const typeMatch = header.match(/data:(image\/[^;]+);base64/i);
+  const type = typeMatch ? typeMatch[1] : 'image/png';
+  // base64 字节估算：每 4 个字符约等于 3 个字节
+  const size = Math.floor((base64.length * 3) / 4);
+  return { type, size };
+}
+
 function readFileAsDataUrl(file){
   return new Promise((resolve, reject)=>{
     const reader = new FileReader();
@@ -178,6 +198,33 @@ async function addImagesFromFiles(files, sourceLabel){
       imageAttachments.push({ name: file.name, type: file.type, size: file.size, dataUrl });
       added++;
     } catch { setStatus('读取图片失败'); }
+  }
+  renderImageList();
+  if (added) setStatus(`${sourceLabel}已添加 ${added} 张图片`);
+  return added>0;
+}
+
+async function addImagesFromDataUrls(urls, sourceLabel){
+  const list = (urls||[]).filter(u=>u && u.startsWith('data:image/'));
+  if (!list.length) return false;
+  if (!isVisionEnabled()){
+    setStatus('当前服务未启用视觉，无法接收图片');
+    return true;
+  }
+  if (imageAttachments.length + list.length > MAX_IMAGE_COUNT){
+    setStatus(`最多仅支持 ${MAX_IMAGE_COUNT} 张图片`);
+    return true;
+  }
+  let added = 0;
+  for (const dataUrl of list){
+    const meta = dataUrlToMeta(dataUrl);
+    if (!meta){ continue; }
+    if (meta.size > MAX_IMAGE_BYTES){
+      setStatus(`图片过大（${humanMiB(meta.size)} MiB），上限 ${humanMiB(MAX_IMAGE_BYTES)} MiB`);
+      continue;
+    }
+    imageAttachments.push({ name: `image-${imageAttachments.length + 1}`, type: meta.type, size: meta.size, dataUrl });
+    added++;
   }
   renderImageList();
   if (added) setStatus(`${sourceLabel}已添加 ${added} 张图片`);
@@ -476,9 +523,13 @@ inputEl.addEventListener('drop', async e=>{
 
 inputEl.addEventListener('paste', e=>{
   const files = parseDataTransferImages(e.clipboardData?.files||[]);
-  if (files.length){
+  const html = e.clipboardData?.getData('text/html') || '';
+  const dataUrlImages = extractDataUrlImagesFromHtml(html);
+  if (files.length || dataUrlImages.length){
     e.preventDefault();
-    addImagesFromFiles(files, '粘贴');
+    e.stopPropagation();
+    if (files.length){ addImagesFromFiles(files, '粘贴'); }
+    else { addImagesFromDataUrls(dataUrlImages, '粘贴'); }
   }
 });
 
