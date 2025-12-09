@@ -4,10 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>AI Translator</title>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https:; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: blob:;" />
   <meta name="theme-color" content="#0d0f11" />
   <script src="js/theme-init.js"></script>
   <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/mobile.css" />
   <link rel="stylesheet" href="css/quill.core.css" />
   <link rel="manifest" href="manifest.webmanifest" />
   
@@ -16,37 +17,53 @@
   <header class="bar">
     <h1 class="app-title">AI Translator <small id="buildInfo" style="font-weight:normal;font-size:0.6em;opacity:0.7"></small></h1>
     <div class="bar-tools">
+      <button id="openSettings" class="icon-btn" type="button" title="设置" aria-label="设置">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+      </button>
       <button id="btnMdModeToggle" class="icon-btn" type="button" title="粘贴为纯文本" aria-label="粘贴为纯文本" aria-pressed="false"></button>
       <button id="btnThemeToggle" class="icon-btn" type="button" title="自动（跟随系统）" aria-label="自动（跟随系统）" aria-pressed="false"></button>
+      <button id="btnToggleControls" class="icon-btn mobile-only" type="button" title="展开/收起配置" aria-label="展开/收起配置" aria-expanded="false" style="display:none">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
     </div>
   </header>
   <main class="layout">
     <section class="controls">
-      <label><select id="serviceSelect"></select></label>
-      <label><select id="promptSelect"></select></label>
-      <label><select id="langSelect" data-ref="lang"></select></label>
-      <div class="btn-row">
-        <button id="btnTranslate" class="btn primary">翻译 (Ctrl+Enter)</button>
-        <button id="btnClear" class="btn">清空</button>
-        <button id="btnCopy" class="btn">复制</button>
-        <nav><button id="openSettings" class="btn">设置</button></nav>
+      <!-- 可折叠区域 -->
+      <div id="controlsCollapsible" class="controls-collapsible">
+        <label><select id="serviceSelect"></select></label>
+        <label><select id="promptSelect"></select></label>
+        <label><select id="langSelect" data-ref="lang"></select></label>
       </div>
-      <div class="attachment-bar" aria-label="图片输入">
-        <div class="btn-row" style="align-items:center">
-          <button id="btnAddImage" class="btn" type="button">添加图片</button>
-          <span id="visionHint" class="status" aria-live="polite"></span>
+
+      <!-- 核心操作区域 -->
+      <div class="controls-actions">
+        <div class="btn-row main-actions">
+          <button id="btnTranslate" class="btn primary">翻译</button>
+          <button id="btnClear" class="btn">清空</button>
+          <button id="btnCopy" class="btn">复制</button>
+          <button id="btnAddImage" class="btn" type="button">图片</button>
         </div>
-        <input type="file" id="imagePicker" accept="image/*" multiple hidden />
-        <div id="imageList" class="attachment-list" aria-live="polite"></div>
+        <div class="attachment-bar" aria-label="图片输入">
+          <span id="visionHint" class="status" aria-live="polite" style="display:none"></span>
+          <input type="file" id="imagePicker" accept="image/*" multiple hidden />
+          <div id="imageList" class="attachment-list" aria-live="polite"></div>
+        </div>
       </div>
     </section>
     <section class="panes">
-      <div class="pane">
-      <div id="inputText" class="ql-container" spellcheck="false"></div>
+      <div class="pane" id="paneInput">
+        <button class="btn-expand icon-btn" type="button" title="全屏/退出全屏" aria-label="全屏/退出全屏">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+        </button>
+        <div id="inputText" class="ql-container" spellcheck="false"></div>
       </div>
-  <div class="pane">
-  <div id="outputView" class="markdown-body" aria-live="polite" tabindex="0" data-role="output" data-copy-source></div>
-  </div>
+      <div class="pane" id="paneOutput">
+        <button class="btn-expand icon-btn" type="button" title="全屏/退出全屏" aria-label="全屏/退出全屏">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+        </button>
+        <div id="outputView" class="markdown-body" aria-live="polite" tabindex="0" data-role="output" data-copy-source></div>
+      </div>
     </section>
     <section class="status" id="statusBar" aria-live="polite">就绪</section>
   </main>
@@ -110,6 +127,8 @@
           <label>Max Tokens <input type="number" min="1" name="maxTokens" data-field="maxTokens"/></label>
           <label>超时(ms) <input type="number" min="1000" name="timeoutMs" data-field="timeoutMs" placeholder="30000"/></label>
           <label>重试次数 <input type="number" min="0" max="5" name="retries" data-field="retries" placeholder="2"/></label>
+          <label>启用图片压缩 <input type="checkbox" name="imageCompression" data-field="imageCompression"/></label>
+          <label>图片压缩质量 (0.1-1.0) <input type="number" step="0.1" min="0.1" max="1.0" name="imageQuality" data-field="imageQuality" placeholder="0.8"/></label>
           <label>Store Responses <input type="checkbox" name="storeResponses" data-field="storeResponses"/></label>
           </fieldset>
         </form>
@@ -131,6 +150,23 @@
           </div>
           <input type="file" id="importFile" accept="application/json" hidden />
           <section id="settingsStatus" class="status" aria-live="polite">未修改</section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 图片管理模态 -->
+  <div id="imageManagerOverlay" class="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="imgMgrTitle">
+      <header class="modal-bar">
+        <h2 id="imgMgrTitle">已添加图片</h2>
+        <div class="flex-gap"></div>
+        <button id="closeImgMgr" class="btn">关闭 (Esc)</button>
+      </header>
+      <div class="modal-body">
+        <div id="imgMgrList" class="manager-list"></div>
+        <div class="btn-row" style="margin-top:16px;justify-content:flex-end">
+           <button id="btnClearImages" class="btn danger">清空所有图片</button>
         </div>
       </div>
     </div>

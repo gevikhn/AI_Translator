@@ -191,7 +191,7 @@ form.addEventListener('submit', async e=>{
   const apiInput = form.querySelector('[data-field=apiKey]');
   if (apiInput && apiInput.value && apiInput.value !== MASK){ svc.apiKeyEnc = apiInput.value.trim(); }
   // 数字规范化：全局与服务级分别处理
-  ['timeoutMs','retries'].forEach(k=>{ if (next[k]!==undefined && next[k] !== '') next[k] = Number(next[k]); });
+  ['timeoutMs','retries','imageQuality'].forEach(k=>{ if (next[k]!==undefined && next[k] !== '') next[k] = Number(next[k]); });
   if (svc.temperature!==undefined && svc.temperature!=='') svc.temperature = Number(svc.temperature); else svc.temperature = 0;
   if (svc.maxTokens!==undefined && svc.maxTokens!=='') svc.maxTokens = Number(svc.maxTokens); else svc.maxTokens = undefined;
   const mp = qsMaster();

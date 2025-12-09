@@ -109,39 +109,156 @@ function isVisionEnabled(){
   } catch { return false; }
 }
 
-function renderImageList(){
-  if (!imageList) return;
-  imageList.innerHTML='';
-  if (!imageAttachments.length) return;
-  for (const [idx,img] of imageAttachments.entries()){
+// 图片管理模态相关
+const imgMgrOverlay = document.getElementById('imageManagerOverlay');
+const imgMgrList = document.getElementById('imgMgrList');
+const closeImgMgr = document.getElementById('closeImgMgr');
+const btnClearImages = document.getElementById('btnClearImages');
+
+function openImageManager(){
+  if (!imgMgrOverlay) return;
+  renderManagerList();
+  imgMgrOverlay.hidden = false;
+  // 简单锁定 body 滚动（复用 ui-settings-modal 的逻辑可能更好，但这里简单处理）
+  document.body.style.overflow = 'hidden';
+}
+
+function closeImageManager(){
+  if (!imgMgrOverlay) return;
+  imgMgrOverlay.hidden = true;
+  document.body.style.overflow = '';
+}
+
+if (closeImgMgr) closeImgMgr.addEventListener('click', closeImageManager);
+if (imgMgrOverlay) imgMgrOverlay.addEventListener('click', e=>{ if (e.target===imgMgrOverlay) closeImageManager(); });
+if (btnClearImages) btnClearImages.addEventListener('click', ()=>{
+  imageAttachments = [];
+  renderManagerList();
+  renderImageList();
+  setStatus('已清空所有图片');
+  closeImageManager();
+});
+
+// Add Escape key handler to close image manager modal
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && imgMgrOverlay && !imgMgrOverlay.hidden) {
+    closeImageManager();
+  }
+});
+function renderManagerList(){
+  if (!imgMgrList) return;
+  imgMgrList.innerHTML = '';
+  if (!imageAttachments.length){
+    imgMgrList.textContent = '暂无图片';
+    return;
+  }
+  imageAttachments.forEach((img, idx) => {
     const chip = document.createElement('div');
     chip.className = 'attachment-chip';
+    
+    if (img.dataUrl) {
+      const thumb = document.createElement('img');
+      thumb.src = img.dataUrl;
+      thumb.className = 'chip-thumb';
+      thumb.alt = img.name || `图片 ${idx+1}`;
+      chip.appendChild(thumb);
+    }
+
     const name = document.createElement('span');
     name.className = 'chip-name';
     name.textContent = img.name || `图片 ${idx+1}`;
+    
     const size = document.createElement('span');
     size.style.color = 'var(--fg-dim)';
+    size.style.fontSize = '0.9em';
     size.textContent = `${(img.size/1024).toFixed(0)} KB`;
+
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = '×';
     btn.title = '移除图片';
     btn.addEventListener('click', ()=>{
       imageAttachments.splice(idx,1);
+      renderManagerList();
       renderImageList();
       setStatus('已移除图片');
     });
-    chip.append(name,size,btn);
+    chip.append(name, size, btn);
+    imgMgrList.appendChild(chip);
+  });
+}
+
+function renderImageList(){
+  if (!imageList) return;
+  imageList.innerHTML='';
+  if (!imageAttachments.length) return;
+
+  const MAX_PREVIEW = 2;
+  const count = imageAttachments.length;
+  // 如果只多出1个，直接显示3个可能比显示2个+1更直观？
+  // 但为了保持布局稳定，严格执行 > 2 则折叠
+  const showCount = count > MAX_PREVIEW ? MAX_PREVIEW : count;
+
+  for (let i=0; i<showCount; i++){
+    const img = imageAttachments[i];
+    const chip = document.createElement('div');
+    chip.className = 'attachment-chip';
+    
+    if (img.dataUrl) {
+      const thumb = document.createElement('img');
+      thumb.src = img.dataUrl;
+      thumb.className = 'chip-thumb';
+      thumb.alt = img.name || `图片 ${i+1}`;
+      chip.appendChild(thumb);
+    }
+
+    const name = document.createElement('span');
+    name.className = 'chip-name';
+    name.textContent = img.name || `图片 ${i+1}`;
+    chip.title = `${img.name} (${(img.size/1024).toFixed(0)} KB)`;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = '×';
+    btn.title = '移除图片';
+    btn.addEventListener('click', (e)=>{
+      e.stopPropagation(); // 防止触发其他点击
+      const currentIdx = imageAttachments.indexOf(img);
+      if (currentIdx !== -1) {
+        imageAttachments.splice(currentIdx, 1);
+        renderImageList();
+        setStatus('已移除图片');
+      }
+    });
+    chip.append(name,btn);
     imageList.appendChild(chip);
+  }
+
+  if (count > MAX_PREVIEW){
+    const moreChip = document.createElement('div');
+    moreChip.className = 'attachment-chip more-chip';
+    moreChip.textContent = `+${count - MAX_PREVIEW}`;
+    moreChip.title = '查看所有图片';
+    moreChip.addEventListener('click', openImageManager);
+    imageList.appendChild(moreChip);
   }
 }
 
 function refreshVisionState(msg=''){
   const enabled = isVisionEnabled();
-  if (btnAddImage) btnAddImage.disabled = !enabled;
+  if (btnAddImage) {
+    btnAddImage.disabled = !enabled;
+    btnAddImage.title = enabled ? '添加图片' : '当前服务不支持视觉输入';
+  }
   if (visionHint){
-    const text = msg || (enabled ? '已启用视觉输入，可上传图片' : '当前服务未启用视觉，无法上传图片');
-    visionHint.textContent = text;
+    // 仅在禁用或有特定消息时显示提示，避免占用空间
+    if (!enabled || msg) {
+      visionHint.textContent = msg || '当前服务未启用视觉';
+      visionHint.style.display = '';
+    } else {
+      visionHint.textContent = '';
+      visionHint.style.display = 'none';
+    }
   }
   if (!enabled && imageAttachments.length){
     imageAttachments = [];
@@ -190,6 +307,42 @@ function readFileAsDataUrl(file){
   });
 }
 
+function compressImage(source, quality) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    let src = '';
+    let isBlob = false;
+    if (typeof source === 'string') {
+      src = source;
+    } else {
+      src = URL.createObjectURL(source);
+      isBlob = true;
+    }
+    
+    img.onload = () => {
+      if (isBlob) URL.revokeObjectURL(src);
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        const head = 'data:image/jpeg;base64,';
+        const size = Math.floor((dataUrl.length - head.length) * 3 / 4);
+        resolve({ dataUrl, type: 'image/jpeg', size });
+      } catch (e) { reject(e); }
+    };
+    img.onerror = (e) => {
+      if (isBlob) URL.revokeObjectURL(src);
+      reject(e);
+    };
+    img.src = src;
+  });
+}
+
 async function addImagesFromFiles(files, sourceLabel){
   const list = parseDataTransferImages(files);
   if (!list.length) return false;
@@ -201,17 +354,34 @@ async function addImagesFromFiles(files, sourceLabel){
     setStatus(`最多仅支持 ${MAX_IMAGE_COUNT} 张图片`);
     return true;
   }
+  
+  const cfg = getActiveConfig();
+  const doCompress = cfg.imageCompression !== false;
+  const quality = Math.min(1.0, Math.max(0.1, Number(cfg.imageQuality) || 0.8));
+
   let added = 0;
   let tooLarge = 0;
   let failed = 0;
   for (const file of list){
-    if (file.size > MAX_IMAGE_BYTES){
-      tooLarge++;
-      continue;
-    }
     try {
-      const dataUrl = await readFileAsDataUrl(file);
-      imageAttachments.push({ name: makeImageName(file.name), type: file.type, size: file.size, dataUrl });
+      let dataUrl, type, size;
+      if (doCompress) {
+        const res = await compressImage(file, quality);
+        dataUrl = res.dataUrl;
+        type = res.type;
+        size = res.size;
+      } else {
+        if (file.size > MAX_IMAGE_BYTES){ tooLarge++; continue; }
+        dataUrl = await readFileAsDataUrl(file);
+        type = file.type;
+        size = file.size;
+      }
+
+      if (size > MAX_IMAGE_BYTES){
+        tooLarge++;
+        continue;
+      }
+      imageAttachments.push({ name: makeImageName(file.name), type, size, dataUrl });
       added++;
     } catch { failed++; }
   }
@@ -241,18 +411,39 @@ async function addImagesFromDataUrls(urls, sourceLabel){
     setStatus(`最多仅支持 ${MAX_IMAGE_COUNT} 张图片`);
     return true;
   }
+
+  const cfg = getActiveConfig();
+  const doCompress = cfg.imageCompression !== false;
+  const quality = Math.min(1.0, Math.max(0.1, Number.isFinite(cfg.imageQuality) ? Number(cfg.imageQuality) : 0.8));
+
   let added = 0;
   let tooLarge = 0;
   let invalid = 0;
   for (const dataUrl of list){
     const meta = dataUrlToMeta(dataUrl);
     if (!meta){ invalid++; continue; }
-    if (meta.size > MAX_IMAGE_BYTES){
-      tooLarge++;
-      continue;
-    }
-    imageAttachments.push({ name: makeImageName(), type: meta.type, size: meta.size, dataUrl });
-    added++;
+    
+    try {
+      let finalDataUrl = dataUrl;
+      let finalType = meta.type;
+      let finalSize = meta.size;
+
+      if (doCompress) {
+        const res = await compressImage(dataUrl, quality);
+        finalDataUrl = res.dataUrl;
+        finalType = res.type;
+        finalSize = res.size;
+      } else {
+        if (meta.size > MAX_IMAGE_BYTES){ tooLarge++; continue; }
+      }
+
+      if (finalSize > MAX_IMAGE_BYTES){
+        tooLarge++;
+        continue;
+      }
+      imageAttachments.push({ name: makeImageName(), type: finalType, size: finalSize, dataUrl: finalDataUrl });
+      added++;
+    } catch { invalid++; }
   }
   renderImageList();
   if (added){
@@ -590,6 +781,45 @@ imagePicker?.addEventListener('change', ()=>{
   if (imagePicker) imagePicker.value = '';
 });
 
+// 全屏切换逻辑
+document.querySelectorAll('.btn-expand').forEach(btn => {
+  let escHandler = null; // 存储当前按钮的 ESC 处理器引用
+  
+  btn.addEventListener('click', (e) => {
+    const pane = btn.closest('.pane');
+    if (!pane) return;
+    const isFull = pane.classList.toggle('fullscreen');
+    
+    // 切换图标
+    const iconExpand = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
+    const iconCompress = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/></svg>';
+    btn.innerHTML = isFull ? iconCompress : iconExpand;
+    btn.title = isFull ? '退出全屏' : '全屏';
+    btn.setAttribute('aria-label', btn.title);
+
+    // 如果是全屏，监听 Esc 退出
+    if (isFull) {
+      escHandler = (ev) => {
+        if (ev.key === 'Escape') {
+          pane.classList.remove('fullscreen');
+          btn.innerHTML = iconExpand;
+          btn.title = '全屏';
+          btn.setAttribute('aria-label', btn.title);
+          window.removeEventListener('keydown', escHandler);
+          escHandler = null;
+        }
+      };
+      window.addEventListener('keydown', escHandler);
+    } else {
+      // 退出全屏时，移除 ESC 处理器（如果存在）
+      if (escHandler) {
+        window.removeEventListener('keydown', escHandler);
+        escHandler = null;
+      }
+    }
+  });
+});
+
 // 使用 Quill Clipboard 模块处理粘贴
 clipboard.onPaste = (range, { text, html }) => {
 
@@ -674,3 +904,15 @@ window.addEventListener('storage', (e)=>{
     refreshVisionState();
   }
 });
+
+// 移动端折叠控制
+const btnToggleControls = document.getElementById('btnToggleControls');
+const controlsCollapsible = document.getElementById('controlsCollapsible');
+if (btnToggleControls && controlsCollapsible){
+  btnToggleControls.addEventListener('click', ()=>{
+    const expanded = controlsCollapsible.classList.toggle('expanded');
+    btnToggleControls.setAttribute('aria-expanded', String(expanded));
+    const svg = btnToggleControls.querySelector('svg');
+    if (svg) svg.style.transform = expanded ? 'rotate(180deg)' : '';
+  });
+}

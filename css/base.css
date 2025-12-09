@@ -8,11 +8,18 @@ body{display:flex;flex-direction:column;min-height:600px}
 .layout{width:100%;max-width:1200px;margin:0 auto;padding:var(--gap);flex:1;display:flex;flex-direction:column;gap:var(--gap);min-height:0}
 .controls{display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--gap)}
 .attachment-bar{display:flex;flex-direction:column;gap:6px;width:100%}
-.attachment-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
-.attachment-chip{display:inline-flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:6px 8px;font-size:12px}
-.attachment-chip .chip-name{max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.attachment-chip button{background:none;border:none;color:var(--fg-dim);cursor:pointer;padding:4px;border-radius:var(--radius)}
+.attachment-list{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:8px;margin-top:2px;padding-bottom:4px;-webkit-overflow-scrolling:touch}
+.attachment-list::-webkit-scrollbar{height:4px}
+.attachment-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.attachment-chip{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px;font-size:12px;max-width:200px}
+.attachment-chip .chip-thumb{width:20px;height:20px;object-fit:cover;border-radius:2px;background:var(--surface-alt)}
+.attachment-chip .chip-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.attachment-chip button{background:none;border:none;color:var(--fg-dim);cursor:pointer;padding:4px;border-radius:var(--radius);flex-shrink:0}
 .attachment-chip button:hover{color:var(--fg);background:var(--surface-alt)}
+.attachment-chip.more-chip{cursor:pointer;background:var(--surface-alt);color:var(--accent);font-weight:600}
+.attachment-chip.more-chip:hover{background:var(--border)}
+.manager-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.manager-list .attachment-chip{display:flex;max-width:none;width:100%}
 .btn-row{display:flex;flex-wrap:wrap;gap:var(--gap)}
 .btn{background:var(--surface);color:var(--fg);border:1px solid var(--border);padding:6px 14px;border-radius:var(--radius);cursor:pointer;font:inherit;font-size:14px}
 .btn.primary{background:var(--accent);color:#fff;border:none}
@@ -28,7 +35,11 @@ body{display:flex;flex-direction:column;min-height:600px}
 .bar .icon-btn:hover{background:var(--bar-bg);border-color:var(--bar-bg)}
 .bar-tools{display:flex;gap:8px;align-items:center}
 .panes{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:var(--gap);min-height:0}
-.pane{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.pane{display:flex;flex-direction:column;min-height:0;overflow:hidden;position:relative}
+.pane .btn-expand{position:absolute;top:8px;right:8px;z-index:10;opacity:0.4;transition:opacity .2s;background:var(--surface-alt);border-color:transparent}
+.pane .btn-expand:hover{opacity:1;background:var(--surface);border-color:var(--border)}
+.pane.fullscreen{position:fixed;inset:0;z-index:2000;background:var(--bg);padding:20px;border-radius:0}
+.pane.fullscreen .ql-container, .pane.fullscreen #outputView{border:none;border-radius:0;height:100%}
 textarea{flex:1;width:100%;resize:vertical;background:var(--surface-alt);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius);padding:10px;font:14px var(--mono);line-height:1.5}
 textarea:focus{outline:2px solid var(--accent);outline-offset:0}
 .ql-container{flex:1;width:100%;resize:vertical;background:var(--surface-alt);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius);overflow:auto}
@@ -80,6 +91,10 @@ input:focus,select:focus{outline:2px solid var(--accent);outline-offset:0}
 .modal-bar h2{margin:0;font-size:15px;font-weight:600}
 .modal-body{padding:16px;max-height:calc(100vh - 160px);overflow:auto;display:flex;flex-direction:column}
 /* Ensure settings modal uses side-by-side layout */
+/* Desktop layout for controls */
+.controls-collapsible, .controls-actions { display: contents; }
+.controls-actions .attachment-bar { width: 100%; }
+
 .modal-body.settings-body{flex-direction:row;align-items:flex-start}
 .settings-body form{flex:1}
 .flex-gap{flex:1}
