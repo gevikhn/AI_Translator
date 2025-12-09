@@ -201,6 +201,7 @@ function renderImageList(){
       const thumb = document.createElement('img');
       thumb.src = img.dataUrl;
       thumb.className = 'chip-thumb';
+      thumb.alt = img.name || `图片 ${i+1}`;
       chip.appendChild(thumb);
     }
 
