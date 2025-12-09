@@ -772,6 +772,8 @@ imagePicker?.addEventListener('change', ()=>{
 
 // 全屏切换逻辑
 document.querySelectorAll('.btn-expand').forEach(btn => {
+  let escHandler = null; // 存储当前按钮的 ESC 处理器引用
+  
   btn.addEventListener('click', (e) => {
     const pane = btn.closest('.pane');
     if (!pane) return;
@@ -786,16 +788,23 @@ document.querySelectorAll('.btn-expand').forEach(btn => {
 
     // 如果是全屏，监听 Esc 退出
     if (isFull) {
-      const escHandler = (ev) => {
+      escHandler = (ev) => {
         if (ev.key === 'Escape') {
           pane.classList.remove('fullscreen');
           btn.innerHTML = iconExpand;
           btn.title = '全屏';
           btn.setAttribute('aria-label', btn.title);
           window.removeEventListener('keydown', escHandler);
+          escHandler = null;
         }
       };
       window.addEventListener('keydown', escHandler);
+    } else {
+      // 退出全屏时，移除 ESC 处理器（如果存在）
+      if (escHandler) {
+        window.removeEventListener('keydown', escHandler);
+        escHandler = null;
+      }
     }
   });
 });
