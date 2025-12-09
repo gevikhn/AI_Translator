@@ -52,12 +52,18 @@
       </div>
     </section>
     <section class="panes">
-      <div class="pane">
-      <div id="inputText" class="ql-container" spellcheck="false"></div>
+      <div class="pane" id="paneInput">
+        <button class="btn-expand icon-btn" type="button" title="全屏/退出全屏" aria-label="全屏/退出全屏">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+        </button>
+        <div id="inputText" class="ql-container" spellcheck="false"></div>
       </div>
-  <div class="pane">
-  <div id="outputView" class="markdown-body" aria-live="polite" tabindex="0" data-role="output" data-copy-source></div>
-  </div>
+      <div class="pane" id="paneOutput">
+        <button class="btn-expand icon-btn" type="button" title="全屏/退出全屏" aria-label="全屏/退出全屏">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+        </button>
+        <div id="outputView" class="markdown-body" aria-live="polite" tabindex="0" data-role="output" data-copy-source></div>
+      </div>
     </section>
     <section class="status" id="statusBar" aria-live="polite">就绪</section>
   </main>

@@ -35,7 +35,11 @@ body{display:flex;flex-direction:column;min-height:600px}
 .bar .icon-btn:hover{background:var(--bar-bg);border-color:var(--bar-bg)}
 .bar-tools{display:flex;gap:8px;align-items:center}
 .panes{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:var(--gap);min-height:0}
-.pane{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.pane{display:flex;flex-direction:column;min-height:0;overflow:hidden;position:relative}
+.pane .btn-expand{position:absolute;top:8px;right:8px;z-index:10;opacity:0.4;transition:opacity .2s;background:var(--surface-alt);border-color:transparent}
+.pane .btn-expand:hover{opacity:1;background:var(--surface);border-color:var(--border)}
+.pane.fullscreen{position:fixed;inset:0;z-index:2000;background:var(--bg);padding:20px;border-radius:0}
+.pane.fullscreen .ql-container, .pane.fullscreen #outputView{border:none;border-radius:0;height:100%}
 textarea{flex:1;width:100%;resize:vertical;background:var(--surface-alt);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius);padding:10px;font:14px var(--mono);line-height:1.5}
 textarea:focus{outline:2px solid var(--accent);outline-offset:0}
 .ql-container{flex:1;width:100%;resize:vertical;background:var(--surface-alt);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius);overflow:auto}

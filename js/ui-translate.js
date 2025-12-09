@@ -770,6 +770,36 @@ imagePicker?.addEventListener('change', ()=>{
   if (imagePicker) imagePicker.value = '';
 });
 
+// 全屏切换逻辑
+document.querySelectorAll('.btn-expand').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    const pane = btn.closest('.pane');
+    if (!pane) return;
+    const isFull = pane.classList.toggle('fullscreen');
+    
+    // 切换图标
+    const iconExpand = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
+    const iconCompress = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/></svg>';
+    btn.innerHTML = isFull ? iconCompress : iconExpand;
+    btn.title = isFull ? '退出全屏' : '全屏';
+    btn.setAttribute('aria-label', btn.title);
+
+    // 如果是全屏，监听 Esc 退出
+    if (isFull) {
+      const escHandler = (ev) => {
+        if (ev.key === 'Escape') {
+          pane.classList.remove('fullscreen');
+          btn.innerHTML = iconExpand;
+          btn.title = '全屏';
+          btn.setAttribute('aria-label', btn.title);
+          window.removeEventListener('keydown', escHandler);
+        }
+      };
+      window.addEventListener('keydown', escHandler);
+    }
+  });
+});
+
 // 使用 Quill Clipboard 模块处理粘贴
 clipboard.onPaste = (range, { text, html }) => {
 
