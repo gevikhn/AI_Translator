@@ -1,0 +1,36 @@
+/* Mobile UI Optimization */
+.controls-collapsible { display: contents; }
+.controls-actions { width: 100%; }
+
+@media (max-width: 600px) {
+  .layout { padding: 8px; gap: 8px; }
+  
+  .controls { gap: 8px; position: relative; }
+  
+  /* Show toggle button in header */
+  .bar-tools .mobile-only { display: flex !important; }
+
+  .controls-collapsible { display: none; flex-direction: column; gap: 8px; width: 100%; }
+  .controls-collapsible.expanded { display: flex; }
+  
+  .controls-actions .main-actions { 
+    display: grid; 
+    grid-template-columns: 1fr 1fr 1fr 1fr; 
+    gap: 8px; 
+    margin-top: 0;
+  }
+  
+  .controls-actions .btn { 
+    padding: 8px 2px; 
+    font-size: 13px; 
+    justify-content: center; 
+    text-align: center;
+  }
+  
+  /* Adjust panes to ensure they take remaining height */
+  .panes { 
+    grid-template-columns: 1fr; 
+    grid-template-rows: 1fr 1fr; 
+    height: auto; /* Let flex grow handle it */
+  }
+}

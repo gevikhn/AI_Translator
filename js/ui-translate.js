@@ -109,39 +109,145 @@ function isVisionEnabled(){
   } catch { return false; }
 }
 
-function renderImageList(){
-  if (!imageList) return;
-  imageList.innerHTML='';
-  if (!imageAttachments.length) return;
-  for (const [idx,img] of imageAttachments.entries()){
+// 图片管理模态相关
+const imgMgrOverlay = document.getElementById('imageManagerOverlay');
+const imgMgrList = document.getElementById('imgMgrList');
+const closeImgMgr = document.getElementById('closeImgMgr');
+const btnClearImages = document.getElementById('btnClearImages');
+
+function openImageManager(){
+  if (!imgMgrOverlay) return;
+  renderManagerList();
+  imgMgrOverlay.hidden = false;
+  // 简单锁定 body 滚动（复用 ui-settings-modal 的逻辑可能更好，但这里简单处理）
+  document.body.style.overflow = 'hidden';
+}
+
+function closeImageManager(){
+  if (!imgMgrOverlay) return;
+  imgMgrOverlay.hidden = true;
+  document.body.style.overflow = '';
+}
+
+if (closeImgMgr) closeImgMgr.addEventListener('click', closeImageManager);
+if (imgMgrOverlay) imgMgrOverlay.addEventListener('click', e=>{ if (e.target===imgMgrOverlay) closeImageManager(); });
+if (btnClearImages) btnClearImages.addEventListener('click', ()=>{
+  imageAttachments = [];
+  renderManagerList();
+  renderImageList();
+  setStatus('已清空所有图片');
+  closeImageManager();
+});
+
+function renderManagerList(){
+  if (!imgMgrList) return;
+  imgMgrList.innerHTML = '';
+  if (!imageAttachments.length){
+    imgMgrList.textContent = '暂无图片';
+    return;
+  }
+  imageAttachments.forEach((img, idx) => {
     const chip = document.createElement('div');
     chip.className = 'attachment-chip';
+    
+    if (img.dataUrl) {
+      const thumb = document.createElement('img');
+      thumb.src = img.dataUrl;
+      thumb.className = 'chip-thumb';
+      chip.appendChild(thumb);
+    }
+
     const name = document.createElement('span');
     name.className = 'chip-name';
     name.textContent = img.name || `图片 ${idx+1}`;
+    
     const size = document.createElement('span');
     size.style.color = 'var(--fg-dim)';
+    size.style.fontSize = '0.9em';
     size.textContent = `${(img.size/1024).toFixed(0)} KB`;
+
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = '×';
     btn.title = '移除图片';
     btn.addEventListener('click', ()=>{
       imageAttachments.splice(idx,1);
+      renderManagerList();
       renderImageList();
       setStatus('已移除图片');
     });
-    chip.append(name,size,btn);
+    chip.append(name, size, btn);
+    imgMgrList.appendChild(chip);
+  });
+}
+
+function renderImageList(){
+  if (!imageList) return;
+  imageList.innerHTML='';
+  if (!imageAttachments.length) return;
+
+  const MAX_PREVIEW = 2;
+  const count = imageAttachments.length;
+  // 如果只多出1个，直接显示3个可能比显示2个+1更直观？
+  // 但为了保持布局稳定，严格执行 > 2 则折叠
+  const showCount = count > MAX_PREVIEW ? MAX_PREVIEW : count;
+
+  for (let i=0; i<showCount; i++){
+    const img = imageAttachments[i];
+    const chip = document.createElement('div');
+    chip.className = 'attachment-chip';
+    
+    if (img.dataUrl) {
+      const thumb = document.createElement('img');
+      thumb.src = img.dataUrl;
+      thumb.className = 'chip-thumb';
+      chip.appendChild(thumb);
+    }
+
+    const name = document.createElement('span');
+    name.className = 'chip-name';
+    name.textContent = img.name || `图片 ${i+1}`;
+    chip.title = `${img.name} (${(img.size/1024).toFixed(0)} KB)`;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = '×';
+    btn.title = '移除图片';
+    btn.addEventListener('click', (e)=>{
+      e.stopPropagation(); // 防止触发其他点击
+      imageAttachments.splice(i,1);
+      renderImageList();
+      setStatus('已移除图片');
+    });
+    chip.append(name,btn);
     imageList.appendChild(chip);
+  }
+
+  if (count > MAX_PREVIEW){
+    const moreChip = document.createElement('div');
+    moreChip.className = 'attachment-chip more-chip';
+    moreChip.textContent = `+${count - MAX_PREVIEW}`;
+    moreChip.title = '查看所有图片';
+    moreChip.addEventListener('click', openImageManager);
+    imageList.appendChild(moreChip);
   }
 }
 
 function refreshVisionState(msg=''){
   const enabled = isVisionEnabled();
-  if (btnAddImage) btnAddImage.disabled = !enabled;
+  if (btnAddImage) {
+    btnAddImage.disabled = !enabled;
+    btnAddImage.title = enabled ? '添加图片' : '当前服务不支持视觉输入';
+  }
   if (visionHint){
-    const text = msg || (enabled ? '已启用视觉输入，可上传图片' : '当前服务未启用视觉，无法上传图片');
-    visionHint.textContent = text;
+    // 仅在禁用或有特定消息时显示提示，避免占用空间
+    if (!enabled || msg) {
+      visionHint.textContent = msg || '当前服务未启用视觉';
+      visionHint.style.display = '';
+    } else {
+      visionHint.textContent = '';
+      visionHint.style.display = 'none';
+    }
   }
   if (!enabled && imageAttachments.length){
     imageAttachments = [];
@@ -748,3 +854,15 @@ window.addEventListener('storage', (e)=>{
     refreshVisionState();
   }
 });
+
+// 移动端折叠控制
+const btnToggleControls = document.getElementById('btnToggleControls');
+const controlsCollapsible = document.getElementById('controlsCollapsible');
+if (btnToggleControls && controlsCollapsible){
+  btnToggleControls.addEventListener('click', ()=>{
+    const expanded = controlsCollapsible.classList.toggle('expanded');
+    btnToggleControls.setAttribute('aria-expanded', String(expanded));
+    const svg = btnToggleControls.querySelector('svg');
+    if (svg) svg.style.transform = expanded ? 'rotate(180deg)' : '';
+  });
+}
