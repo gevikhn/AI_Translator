@@ -34,6 +34,14 @@
       <div class="attachment-bar" aria-label="图片输入">
         <div class="btn-row" style="align-items:center">
           <button id="btnAddImage" class="btn" type="button">添加图片</button>
+          <label class="inline-field" for="imageQualitySelect">压缩等级
+            <select id="imageQualitySelect">
+              <option value="none">不压缩</option>
+              <option value="balanced" selected>标准</option>
+              <option value="strong">强力</option>
+              <option value="extreme">超强</option>
+            </select>
+          </label>
           <span id="visionHint" class="status" aria-live="polite"></span>
         </div>
         <input type="file" id="imagePicker" accept="image/*" multiple hidden />

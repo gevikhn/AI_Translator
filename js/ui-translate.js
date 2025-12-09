@@ -31,6 +31,7 @@ const btnAddImage = document.getElementById('btnAddImage');
 const imagePicker = document.getElementById('imagePicker');
 const imageList = document.getElementById('imageList');
 const visionHint = document.getElementById('visionHint');
+const imageQualitySelect = document.getElementById('imageQualitySelect');
 
 const LANGS = [
   ['zh-CN','中文'],['en','English'],['ja','日本語'],['ko','한국어'],['fr','Français'],['de','Deutsch']
@@ -78,6 +79,12 @@ const MAX_FILE_BYTES = 2 * 1024 * 1024; // 2MB
 const MAX_INPUT_CHARS = 200000; // 200k chars
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB per image
 const MAX_IMAGE_COUNT = 8;
+const IMAGE_QUALITY_PRESETS = {
+  none: { label:'不压缩', quality:1, maxDimension:null, targetType:null },
+  balanced: { label:'标准', quality:0.75, maxDimension:1600, targetType:'image/jpeg' },
+  strong: { label:'强力', quality:0.6, maxDimension:1400, targetType:'image/jpeg' },
+  extreme: { label:'超强', quality:0.45, maxDimension:1200, targetType:'image/jpeg' }
+};
 function humanMiB(bytes){ return (bytes/1024/1024).toFixed(1); }
 
 // Markdown 工具
@@ -181,13 +188,60 @@ function dataUrlToMeta(dataUrl){
   return { type, size };
 }
 
-function readFileAsDataUrl(file){
+function getImageCompressionPreset(){
+  const key = imageQualitySelect?.value || 'balanced';
+  return IMAGE_QUALITY_PRESETS[key] || IMAGE_QUALITY_PRESETS.balanced;
+}
+
+function scaleToMax(width, height, maxDimension){
+  if (!maxDimension || (width <= maxDimension && height <= maxDimension)) return { width, height };
+  const ratio = Math.min(maxDimension / width, maxDimension / height);
+  return { width: Math.round(width * ratio), height: Math.round(height * ratio) };
+}
+
+function readBlobAsDataUrl(blob){
   return new Promise((resolve, reject)=>{
     const reader = new FileReader();
     reader.onerror = ()=>reject(reader.error);
     reader.onload = ()=>resolve(reader.result);
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(blob);
   });
+}
+
+async function loadImageFromBlob(blob){
+  return new Promise((resolve, reject)=>{
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = ()=>{ URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = (e)=>{ URL.revokeObjectURL(url); reject(e); };
+    img.src = url;
+  });
+}
+
+async function compressBlobToDataUrl(blob, preset){
+  const image = (typeof createImageBitmap === 'function')
+    ? await createImageBitmap(blob).catch(()=>null)
+    : null;
+  const source = image || await loadImageFromBlob(blob);
+  const { width, height } = scaleToMax(source.width, source.height, preset.maxDimension);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(source, 0, 0, width, height);
+  const targetType = preset.targetType || (blob.type && blob.type.startsWith('image/') ? blob.type : 'image/jpeg');
+  const quality = preset.quality ?? 0.8;
+  const outBlob = await new Promise((resolve, reject)=>{
+    canvas.toBlob(b=> b ? resolve(b) : reject(new Error('压缩失败')), targetType, quality);
+  });
+  const dataUrl = await readBlobAsDataUrl(outBlob);
+  return { dataUrl, size: outBlob.size, type: outBlob.type || targetType };
+}
+
+async function compressDataUrl(dataUrl, preset){
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  return compressBlobToDataUrl(blob, preset);
 }
 
 async function addImagesFromFiles(files, sourceLabel){
@@ -204,27 +258,28 @@ async function addImagesFromFiles(files, sourceLabel){
   let added = 0;
   let tooLarge = 0;
   let failed = 0;
+  const preset = getImageCompressionPreset();
   for (const file of list){
-    if (file.size > MAX_IMAGE_BYTES){
-      tooLarge++;
-      continue;
-    }
     try {
-      const dataUrl = await readFileAsDataUrl(file);
-      imageAttachments.push({ name: makeImageName(file.name), type: file.type, size: file.size, dataUrl });
+      const { dataUrl, size, type } = await compressBlobToDataUrl(file, preset);
+      if (size > MAX_IMAGE_BYTES){
+        tooLarge++;
+        continue;
+      }
+      imageAttachments.push({ name: makeImageName(file.name), type, size, dataUrl });
       added++;
     } catch { failed++; }
   }
   renderImageList();
   if (added){
     let msg = `${sourceLabel}已添加 ${added} 张图片`;
-    if (tooLarge) msg += `，${tooLarge} 张过大已跳过`;
-    if (failed) msg += `，${failed} 张读取失败`;
+    if (tooLarge) msg += `，${tooLarge} 张压缩后仍过大已跳过`;
+    if (failed) msg += `，${failed} 张压缩失败`;
     setStatus(msg);
   } else if (tooLarge || failed){
     const parts = [];
-    if (tooLarge) parts.push(`${tooLarge} 张图片过大（上限 ${humanMiB(MAX_IMAGE_BYTES)} MiB）`);
-    if (failed) parts.push(`${failed} 张读取失败`);
+    if (tooLarge) parts.push(`${tooLarge} 张图片压缩后仍过大（上限 ${humanMiB(MAX_IMAGE_BYTES)} MiB）`);
+    if (failed) parts.push(`${failed} 张压缩失败`);
     setStatus(parts.join('，') + '，已跳过');
   }
   return added>0;
@@ -244,26 +299,33 @@ async function addImagesFromDataUrls(urls, sourceLabel){
   let added = 0;
   let tooLarge = 0;
   let invalid = 0;
+  let failed = 0;
+  const preset = getImageCompressionPreset();
   for (const dataUrl of list){
     const meta = dataUrlToMeta(dataUrl);
     if (!meta){ invalid++; continue; }
-    if (meta.size > MAX_IMAGE_BYTES){
-      tooLarge++;
-      continue;
-    }
-    imageAttachments.push({ name: makeImageName(), type: meta.type, size: meta.size, dataUrl });
-    added++;
+    try {
+      const { dataUrl: compressedUrl, size, type } = await compressDataUrl(dataUrl, preset);
+      if (size > MAX_IMAGE_BYTES){
+        tooLarge++;
+        continue;
+      }
+      imageAttachments.push({ name: makeImageName(), type, size, dataUrl: compressedUrl });
+      added++;
+    } catch { failed++; }
   }
   renderImageList();
   if (added){
     let msg = `${sourceLabel}已添加 ${added} 张图片`;
-    if (tooLarge) msg += `，${tooLarge} 张过大已跳过`;
+    if (tooLarge) msg += `，${tooLarge} 张压缩后仍过大已跳过`;
     if (invalid) msg += `，${invalid} 张格式不支持`;
+    if (failed) msg += `，${failed} 张压缩失败`;
     setStatus(msg);
-  } else if (tooLarge || invalid){
+  } else if (tooLarge || invalid || failed){
     const parts = [];
-    if (tooLarge) parts.push(`${tooLarge} 张图片过大（上限 ${humanMiB(MAX_IMAGE_BYTES)} MiB）`);
+    if (tooLarge) parts.push(`${tooLarge} 张图片压缩后仍过大（上限 ${humanMiB(MAX_IMAGE_BYTES)} MiB）`);
     if (invalid) parts.push(`${invalid} 张格式不支持`);
+    if (failed) parts.push(`${failed} 张压缩失败`);
     setStatus(parts.join('，') + '，已跳过');
   }
   return added>0;
