@@ -43,7 +43,7 @@ function parseDataUrl(dataUrl){
 
 function buildResponsesContent(userText, images){
   const content = [];
-  if (userText || !images.length) content.push({ type:'input_text', text: userText });
+  if (userText) content.push({ type:'input_text', text: userText });
   for (const img of normalizeImages(images)){
     content.push({ type:'input_image', image_url: img.dataUrl });
   }
@@ -52,7 +52,7 @@ function buildResponsesContent(userText, images){
 
 function buildChatContent(userText, images){
   const content = [];
-  if (userText || !images.length) content.push({ type:'text', text: userText });
+  if (userText) content.push({ type:'text', text: userText });
   for (const img of normalizeImages(images)){
     content.push({ type:'image_url', image_url: { url: img.dataUrl } });
   }
@@ -61,7 +61,7 @@ function buildChatContent(userText, images){
 
 function buildClaudeContent(userText, images){
   const content = [];
-  if (userText || !images.length) content.push({ type:'text', text: userText });
+  if (userText) content.push({ type:'text', text: userText });
   for (const img of normalizeImages(images)){
     const { mediaType, data } = parseDataUrl(img.dataUrl);
     content.push({ type:'image', source:{ type:'base64', media_type: mediaType, data } });
@@ -73,7 +73,7 @@ function responsesContentToChat(content){
   const out = [];
   for (const item of content||[]){
     if (item?.type === 'input_text') out.push({ type:'text', text: item.text || '' });
-    else if (item?.type === 'input_image' && (item.image_url || item.image_url?.url)){
+    else if (item?.type === 'input_image' && item.image_url){
       const url = typeof item.image_url === 'string' ? item.image_url : item.image_url.url;
       out.push({ type:'image_url', image_url:{ url } });
     }
@@ -264,7 +264,15 @@ async function * streamChatOpenAI(cfg, payload, externalSignal){
   const timeout = setTimeout(()=>controller.abort(), cfg.timeoutMs||30000);
   const userContent = responsesContentToChat(payload?.input?.[0]?.content || []);
   const system = sanitizeSystem(payload.instructions||'');
-  const chatBody = { model: payload.model, stream:true, temperature: payload.temperature, messages:[ system?{ role:'system', content: system }:null, { role:'user', content: userContent.length ? userContent : '' } ].filter(Boolean) };
+  const chatBody = {
+    model: payload.model,
+    stream:true,
+    temperature: payload.temperature,
+    messages:[
+      system?{ role:'system', content: system }:null,
+      { role:'user', content: userContent.length > 0 ? userContent : '' }
+    ].filter(Boolean)
+  };
   let resp;
   try {
     resp = await fetch(cfg.baseUrl.replace(/\/$/,'') + '/chat/completions', { method:'POST', headers:{ 'Authorization':'Bearer '+(cfg.apiKey || cfg.apiKeyEnc), 'Content-Type':'application/json' }, body: JSON.stringify(chatBody), signal: controller.signal });

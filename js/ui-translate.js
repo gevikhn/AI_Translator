@@ -94,6 +94,13 @@ function renderMarkdown(text){
 
 // 视觉输入支持
 let imageAttachments = [];
+let imageCounter = 0;
+
+function makeImageName(explicit){
+  if (explicit) return explicit;
+  imageCounter += 1;
+  return `image-${imageCounter}`;
+}
 
 function isVisionEnabled(){
   try {
@@ -169,8 +176,8 @@ function dataUrlToMeta(dataUrl){
   if (!base64) return null;
   const typeMatch = header.match(/data:(image\/[^;]+);base64/i);
   const type = typeMatch ? typeMatch[1] : 'image/png';
-  // base64 字节估算：每 4 个字符约等于 3 个字节
-  const size = Math.floor((base64.length * 3) / 4);
+  // base64 字节估算：每 4 个字符约等于 3 个字节，需减去 padding
+  const size = Math.floor((base64.length * 3) / 4 - (base64.match(/=/g) || []).length);
   return { type, size };
 }
 
@@ -195,19 +202,31 @@ async function addImagesFromFiles(files, sourceLabel){
     return true;
   }
   let added = 0;
+  let tooLarge = 0;
+  let failed = 0;
   for (const file of list){
     if (file.size > MAX_IMAGE_BYTES){
-      setStatus(`图片过大（${humanMiB(file.size)} MiB），上限 ${humanMiB(MAX_IMAGE_BYTES)} MiB`);
+      tooLarge++;
       continue;
     }
     try {
       const dataUrl = await readFileAsDataUrl(file);
-      imageAttachments.push({ name: file.name, type: file.type, size: file.size, dataUrl });
+      imageAttachments.push({ name: makeImageName(file.name), type: file.type, size: file.size, dataUrl });
       added++;
-    } catch { setStatus('读取图片失败'); }
+    } catch { failed++; }
   }
   renderImageList();
-  if (added) setStatus(`${sourceLabel}已添加 ${added} 张图片`);
+  if (added){
+    let msg = `${sourceLabel}已添加 ${added} 张图片`;
+    if (tooLarge) msg += `，${tooLarge} 张过大已跳过`;
+    if (failed) msg += `，${failed} 张读取失败`;
+    setStatus(msg);
+  } else if (tooLarge || failed){
+    const parts = [];
+    if (tooLarge) parts.push(`${tooLarge} 张图片过大（上限 ${humanMiB(MAX_IMAGE_BYTES)} MiB）`);
+    if (failed) parts.push(`${failed} 张读取失败`);
+    setStatus(parts.join('，') + '，已跳过');
+  }
   return added>0;
 }
 
@@ -223,18 +242,30 @@ async function addImagesFromDataUrls(urls, sourceLabel){
     return true;
   }
   let added = 0;
+  let tooLarge = 0;
+  let invalid = 0;
   for (const dataUrl of list){
     const meta = dataUrlToMeta(dataUrl);
-    if (!meta){ continue; }
+    if (!meta){ invalid++; continue; }
     if (meta.size > MAX_IMAGE_BYTES){
-      setStatus(`图片过大（${humanMiB(meta.size)} MiB），上限 ${humanMiB(MAX_IMAGE_BYTES)} MiB`);
+      tooLarge++;
       continue;
     }
-    imageAttachments.push({ name: `image-${imageAttachments.length + 1}`, type: meta.type, size: meta.size, dataUrl });
+    imageAttachments.push({ name: makeImageName(), type: meta.type, size: meta.size, dataUrl });
     added++;
   }
   renderImageList();
-  if (added) setStatus(`${sourceLabel}已添加 ${added} 张图片`);
+  if (added){
+    let msg = `${sourceLabel}已添加 ${added} 张图片`;
+    if (tooLarge) msg += `，${tooLarge} 张过大已跳过`;
+    if (invalid) msg += `，${invalid} 张格式不支持`;
+    setStatus(msg);
+  } else if (tooLarge || invalid){
+    const parts = [];
+    if (tooLarge) parts.push(`${tooLarge} 张图片过大（上限 ${humanMiB(MAX_IMAGE_BYTES)} MiB）`);
+    if (invalid) parts.push(`${invalid} 张格式不支持`);
+    setStatus(parts.join('，') + '，已跳过');
+  }
   return added>0;
 }
 
@@ -466,20 +497,19 @@ window.addEventListener('keydown', e=>{
 // 拖拽 txt 文件或文本内容
 inputEl.addEventListener('dragover', e=>{ e.preventDefault(); }, true);
 inputEl.addEventListener('drop', async e=>{
-  const { files, dataUrlImages } = detectImagesFromEventData(e.dataTransfer);
-  if (files.length || dataUrlImages.length){
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation?.();
-    if (files.length){ await addImagesFromFiles(files, '拖拽'); }
-    else { await addImagesFromDataUrls(dataUrlImages, '拖拽'); }
-    return;
-  }
   e.preventDefault();
   const dt = e.dataTransfer;
   const fileList = Array.from(dt.files||[]);
-  const nonImageFiles = fileList.filter(f=>!(f.type && f.type.startsWith('image/')));
-  await addImagesFromFiles(fileList, '拖拽');
+  const imageFiles = parseDataTransferImages(fileList);
+  const nonImageFiles = fileList.filter(f=>!imageFiles.includes(f));
+  const html = typeof dt?.getData === 'function' ? (dt.getData('text/html') || '') : '';
+  const dataUrlImages = extractDataUrlImagesFromHtml(html);
+  if (imageFiles.length || dataUrlImages.length){
+    e.stopPropagation();
+    e.stopImmediatePropagation?.();
+    if (imageFiles.length){ await addImagesFromFiles(imageFiles, '拖拽'); }
+    if (dataUrlImages.length){ await addImagesFromDataUrls(dataUrlImages, '拖拽'); }
+  }
   if (nonImageFiles.length){
     const f = nonImageFiles[0];
     if (f.size > MAX_FILE_BYTES){
