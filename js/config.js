@@ -38,6 +38,9 @@ const defaultConfig = {
   maxTokens: undefined,
   timeoutMs: 30000,
   retries: 2,
+  // 图片压缩配置
+  imageCompression: true,
+  imageQuality: 0.8,
   // theme 已移除，由 UI 侧边栏开关管理（localStorage: AI_TR_THEME_MODE）
   storeResponses: false,
   // 多服务

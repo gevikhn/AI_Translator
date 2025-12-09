@@ -190,6 +190,42 @@ function readFileAsDataUrl(file){
   });
 }
 
+function compressImage(source, quality) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    let src = '';
+    let isBlob = false;
+    if (typeof source === 'string') {
+      src = source;
+    } else {
+      src = URL.createObjectURL(source);
+      isBlob = true;
+    }
+    
+    img.onload = () => {
+      if (isBlob) URL.revokeObjectURL(src);
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        const head = 'data:image/jpeg;base64,';
+        const size = Math.floor((dataUrl.length - head.length) * 3 / 4);
+        resolve({ dataUrl, type: 'image/jpeg', size });
+      } catch (e) { reject(e); }
+    };
+    img.onerror = (e) => {
+      if (isBlob) URL.revokeObjectURL(src);
+      reject(e);
+    };
+    img.src = src;
+  });
+}
+
 async function addImagesFromFiles(files, sourceLabel){
   const list = parseDataTransferImages(files);
   if (!list.length) return false;
@@ -201,17 +237,34 @@ async function addImagesFromFiles(files, sourceLabel){
     setStatus(`最多仅支持 ${MAX_IMAGE_COUNT} 张图片`);
     return true;
   }
+  
+  const cfg = getActiveConfig();
+  const doCompress = cfg.imageCompression !== false;
+  const quality = cfg.imageQuality || 0.8;
+
   let added = 0;
   let tooLarge = 0;
   let failed = 0;
   for (const file of list){
-    if (file.size > MAX_IMAGE_BYTES){
-      tooLarge++;
-      continue;
-    }
     try {
-      const dataUrl = await readFileAsDataUrl(file);
-      imageAttachments.push({ name: makeImageName(file.name), type: file.type, size: file.size, dataUrl });
+      let dataUrl, type, size;
+      if (doCompress) {
+        const res = await compressImage(file, quality);
+        dataUrl = res.dataUrl;
+        type = res.type;
+        size = res.size;
+      } else {
+        if (file.size > MAX_IMAGE_BYTES){ tooLarge++; continue; }
+        dataUrl = await readFileAsDataUrl(file);
+        type = file.type;
+        size = file.size;
+      }
+
+      if (size > MAX_IMAGE_BYTES){
+        tooLarge++;
+        continue;
+      }
+      imageAttachments.push({ name: makeImageName(file.name), type, size, dataUrl });
       added++;
     } catch { failed++; }
   }
@@ -241,18 +294,39 @@ async function addImagesFromDataUrls(urls, sourceLabel){
     setStatus(`最多仅支持 ${MAX_IMAGE_COUNT} 张图片`);
     return true;
   }
+
+  const cfg = getActiveConfig();
+  const doCompress = cfg.imageCompression !== false;
+  const quality = cfg.imageQuality || 0.8;
+
   let added = 0;
   let tooLarge = 0;
   let invalid = 0;
   for (const dataUrl of list){
     const meta = dataUrlToMeta(dataUrl);
     if (!meta){ invalid++; continue; }
-    if (meta.size > MAX_IMAGE_BYTES){
-      tooLarge++;
-      continue;
-    }
-    imageAttachments.push({ name: makeImageName(), type: meta.type, size: meta.size, dataUrl });
-    added++;
+    
+    try {
+      let finalDataUrl = dataUrl;
+      let finalType = meta.type;
+      let finalSize = meta.size;
+
+      if (doCompress) {
+        const res = await compressImage(dataUrl, quality);
+        finalDataUrl = res.dataUrl;
+        finalType = res.type;
+        finalSize = res.size;
+      } else {
+        if (meta.size > MAX_IMAGE_BYTES){ tooLarge++; continue; }
+      }
+
+      if (finalSize > MAX_IMAGE_BYTES){
+        tooLarge++;
+        continue;
+      }
+      imageAttachments.push({ name: makeImageName(), type: finalType, size: finalSize, dataUrl: finalDataUrl });
+      added++;
+    } catch { invalid++; }
   }
   renderImageList();
   if (added){
