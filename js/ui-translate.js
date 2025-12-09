@@ -413,7 +413,7 @@ async function addImagesFromDataUrls(urls, sourceLabel){
 
   const cfg = getActiveConfig();
   const doCompress = cfg.imageCompression !== false;
-  const quality = cfg.imageQuality || 0.8;
+  const quality = Math.min(1.0, Math.max(0.1, Number.isFinite(cfg.imageQuality) ? Number(cfg.imageQuality) : 0.8));
 
   let added = 0;
   let tooLarge = 0;
