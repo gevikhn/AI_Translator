@@ -116,7 +116,7 @@ function loadIntoForm(){
   [...form.querySelectorAll('[data-field]')].forEach(el=>{
     const key = el.getAttribute('data-field');
     if (['apiKey','masterPassword','promptTemplate'].includes(key)) return; // 这些字段单独处理
-    const serviceKeys = ['apiType','baseUrl','model','temperature','maxTokens'];
+    const serviceKeys = ['apiType','baseUrl','model','vision','temperature','maxTokens'];
     if (serviceKeys.includes(key)){
       if (el.type==='checkbox') el.checked = !!svc[key]; else el.value = svc[key] == null ? '' : svc[key];
     } else {
@@ -176,7 +176,7 @@ form.addEventListener('submit', async e=>{
     const key = el.getAttribute('data-field');
     if (key === 'apiKey' || key === 'masterPassword' || key === 'promptTemplate') return; // 跳过保存明文字段
     const val = el.type==='checkbox' ? el.checked : el.value.trim();
-    if (['apiType','baseUrl','model','temperature','maxTokens'].includes(key)) svc[key] = val;
+    if (['apiType','baseUrl','model','vision','temperature','maxTokens'].includes(key)) svc[key] = val;
     else next[key] = val;
   });
   const prompt = { ...getActivePrompt(cfg) };
@@ -524,7 +524,7 @@ btnAddSvc?.addEventListener('click', ()=>{
   const cfg = loadConfig();
   const idx = (cfg.services||[]).length + 1;
   const id = `svc-${Date.now()}-${idx}`;
-  const base = { id, name:`服务${idx}`, apiType:'openai-responses', baseUrl:'https://api.openai.com/v1', apiKeyEnc:'', model:'gpt-4o-mini', temperature: 0, maxTokens: undefined };
+  const base = { id, name:`服务${idx}`, apiType:'openai-responses', baseUrl:'https://api.openai.com/v1', apiKeyEnc:'', model:'gpt-4o-mini', vision: true, temperature: 0, maxTokens: undefined };
   cfg.services = [...(cfg.services||[]), base];
   cfg.activeServiceId = id;
   saveConfig(cfg); loadIntoForm(); statusEl.textContent = '已新增服务配置';

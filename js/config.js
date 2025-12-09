@@ -49,6 +49,7 @@ const defaultConfig = {
       baseUrl: 'https://api.openai.com/v1',
       apiKeyEnc: '',
       model: 'gpt-4o-mini',
+      vision: true,
       // 将温度与最大 Token 改为服务级别配置（兼容：若不存在则回退到全局默认值）
       temperature: 0,
       maxTokens: undefined
@@ -121,6 +122,8 @@ function normalizeServices(arr){
     if (!out.baseUrl) out.baseUrl = 'https://api.openai.com/v1';
     if (out.apiKeyEnc == null) out.apiKeyEnc = '';
     if (!out.model) out.model = 'gpt-4o-mini';
+    if (out.vision === undefined) out.vision = true;
+    else out.vision = !!out.vision;
     // 服务级别温度/最大 Token 的缺省与数值规范化
     if (out.temperature === undefined || out.temperature === '') out.temperature = 0;
     else out.temperature = Number(out.temperature);
@@ -151,6 +154,7 @@ function migrateToMultiServices(dataIn){
     baseUrl: data.baseUrl || 'https://api.openai.com/v1',
     apiKeyEnc: data.apiKeyEnc || '',
     model: data.model || 'gpt-4o-mini',
+    vision: data.vision === undefined ? true : !!data.vision,
     // 将旧的全局 temperature / maxTokens 迁移到首个服务
     temperature: (data.temperature!==undefined && data.temperature!=='') ? Number(data.temperature) : 0,
     maxTokens: (data.maxTokens!==undefined && data.maxTokens!=='') ? Number(data.maxTokens) : undefined

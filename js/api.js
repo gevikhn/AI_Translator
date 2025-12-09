@@ -21,6 +21,66 @@ function sanitizeSystem(fullInstr){
   return String(fullInstr).trim();
 }
 
+function normalizeImages(images){
+  if (!Array.isArray(images)) return [];
+  return images
+    .filter(img=>img && img.dataUrl)
+    .map(img=>({
+      dataUrl: img.dataUrl,
+      type: img.type || '',
+      name: img.name || '',
+      size: img.size || 0
+    }));
+}
+
+function parseDataUrl(dataUrl){
+  const m = String(dataUrl||'').match(/^data:([^;]+);base64,(.*)$/);
+  return {
+    mediaType: m?.[1] || 'image/png',
+    data: m?.[2] || ''
+  };
+}
+
+function buildResponsesContent(userText, images){
+  const content = [];
+  if (userText) content.push({ type:'input_text', text: userText });
+  for (const img of normalizeImages(images)){
+    content.push({ type:'input_image', image_url: img.dataUrl });
+  }
+  return content;
+}
+
+function buildChatContent(userText, images){
+  const content = [];
+  if (userText) content.push({ type:'text', text: userText });
+  for (const img of normalizeImages(images)){
+    content.push({ type:'image_url', image_url: { url: img.dataUrl } });
+  }
+  return content;
+}
+
+function buildClaudeContent(userText, images){
+  const content = [];
+  if (userText) content.push({ type:'text', text: userText });
+  for (const img of normalizeImages(images)){
+    const { mediaType, data } = parseDataUrl(img.dataUrl);
+    content.push({ type:'image', source:{ type:'base64', media_type: mediaType, data } });
+  }
+  return content;
+}
+
+function responsesContentToChat(content){
+  const out = [];
+  for (const item of content||[]){
+    if (item?.type === 'input_text') out.push({ type:'text', text: item.text || '' });
+    else if (item?.type === 'input_image' && item.image_url){
+      const url = typeof item.image_url === 'string' ? item.image_url : item.image_url.url;
+      out.push({ type:'image_url', image_url:{ url } });
+    }
+  }
+  return out;
+}
+
 /**
  * 非流式翻译（v0.1）
  * @param {string} text
@@ -30,20 +90,23 @@ function sanitizeSystem(fullInstr){
 export async function translateOnce(text, opts={}){
   const cfg = getActiveConfig();
   const target = opts.targetLanguage || cfg.targetLanguage;
+  const images = normalizeImages(opts.images);
   if (!cfg.apiKeyEnc) throw makeError('ConfigError','请在设置中填写 API Key');
   let apiKey;
   try { apiKey = await getApiKeyAuto(); }
   catch(e){ if (/主密码不正确/.test(e.message)) throw makeError('AuthError','主密码错误，无法解锁 API Key'); else throw e; }
   if (cfg.apiType === 'openai-responses'){
     const userContent = `<translate_input>${text}</translate_input>`;
-  const instructions = renderTemplate(cfg.promptTemplate, { text, target_language: target });
-  const system = sanitizeSystem(instructions); // 回退 chat 用
+    const instructions = renderTemplate(cfg.promptTemplate, { text, target_language: target });
+    const system = sanitizeSystem(instructions); // 回退 chat 用
+    const inputContent = buildResponsesContent(userContent, images);
+    const chatContent = buildChatContent(userContent, images);
     const payload = {
       model: cfg.model,
       stream: false,
       temperature: Number(cfg.temperature) || 0,
       instructions,
-      input: [ { role: 'user', content: [{ type:'input_text', text: userContent }] } ],
+      input: [ { role: 'user', content: inputContent } ],
       ...(cfg.storeResponses ? { metadata:{ store:true }, previous_response_id: previousResponseId() || undefined } : {})
     };
     let textOut;
@@ -55,28 +118,28 @@ export async function translateOnce(text, opts={}){
     } catch(e){
       // 针对部分老模型或不支持 responses 的情况回退 chat.completions
       if (e.name==='ApiError' && /(Invalid value: 'text'|404|not found|Unknown endpoint)/i.test(e.message)){
-        const chatBody = { model: cfg.model, temperature: cfg.temperature ?? 0, messages:[ { role:'system', content: system }, { role:'user', content: userContent } ] };
+        const chatBody = { model: cfg.model, temperature: cfg.temperature ?? 0, messages:[ { role:'system', content: system }, { role:'user', content: chatContent } ] };
         textOut = await postJsonChat(cfg.baseUrl.replace(/\/$/,'') + '/chat/completions', chatBody, apiKey, cfg.timeoutMs, extractTextFromResponses);
       } else throw e;
     }
     return textOut;
   } else if (cfg.apiType === 'openai-chat') {
     const userContent = `<translate_input>${text}</translate_input>`;
-  const full = renderTemplate(cfg.promptTemplate, { text, target_language: target });
-  const system = sanitizeSystem(full);
-    const chatBody = { model: cfg.model, temperature: cfg.temperature ?? 0, messages:[ { role:'system', content: system }, { role:'user', content: userContent } ] };
+    const full = renderTemplate(cfg.promptTemplate, { text, target_language: target });
+    const system = sanitizeSystem(full);
+    const chatBody = { model: cfg.model, temperature: cfg.temperature ?? 0, messages:[ { role:'system', content: system }, { role:'user', content: buildChatContent(userContent, images) } ] };
     const out = await postJsonChat(cfg.baseUrl.replace(/\/$/,'') + '/chat/completions', chatBody, apiKey, cfg.timeoutMs, extractTextFromResponses);
     return out;
   } else if (cfg.apiType === 'claude') {
-  const full = renderTemplate(cfg.promptTemplate, { text, target_language: target });
-  const system = sanitizeSystem(full);
+    const full = renderTemplate(cfg.promptTemplate, { text, target_language: target });
+    const system = sanitizeSystem(full);
     const user = `<translate_input>${text}</translate_input>\nTarget: ${target}`;
     const payload = {
       model: cfg.model,
       max_tokens: cfg.maxTokens || 2048,
       temperature: cfg.temperature ?? 0,
       system,
-      messages: [ { role:'user', content:[{ type:'text', text: user }] } ]
+      messages: [ { role:'user', content: buildClaudeContent(user, images) } ]
     };
   return await postJsonClaude(cfg.baseUrl.replace(/\/$/,'') + '/messages', payload, apiKey, cfg.timeoutMs, extractTextFromClaudeResponse);
   }
@@ -95,7 +158,11 @@ function extractTextFromResponses(obj){
     if (buf) return buf;
   }
   // 兼容旧 chat.completions
-  if (obj.choices && obj.choices[0]?.message?.content) return obj.choices[0].message.content;
+  if (obj.choices && obj.choices[0]?.message?.content){
+    const cont = obj.choices[0].message.content;
+    if (Array.isArray(cont)) return cont.map(p=>p?.text||p).join('');
+    return cont;
+  }
   return '';
 }
 
@@ -112,15 +179,17 @@ export async function * translateStream(text, opts={}){
   try { apiKey = await getApiKeyAuto(); }
   catch(e){ if (/主密码不正确/.test(e.message)) { throw makeError('AuthError','主密码错误，无法解锁 API Key'); } else throw e; }
   const target = opts.targetLanguage || cfg.targetLanguage;
+  const images = normalizeImages(opts.images);
   if (cfg.apiType === 'openai-responses'){
     const userContent = `<translate_input>${text}</translate_input>`;
     const instructions = renderTemplate(cfg.promptTemplate, { text, target_language: target });
+    const inputContent = buildResponsesContent(userContent, images);
     const payload = {
       model: cfg.model,
       stream: true,
       temperature: Number(cfg.temperature) || 0,
       instructions,
-      input: [ { role: 'user', content: [{ type:'input_text', text: userContent }] } ],
+      input: [ { role: 'user', content: inputContent } ],
       ...(cfg.storeResponses ? { metadata:{ store:true }, previous_response_id: previousResponseId() || undefined } : {})
     };
   yield* streamOpenAI({ ...cfg, apiKey }, payload, opts.signal);
@@ -129,9 +198,9 @@ export async function * translateStream(text, opts={}){
     const userContent = `<translate_input>${text}</translate_input>`;
   const full = renderTemplate(cfg.promptTemplate, { text, target_language: target });
   const system = sanitizeSystem(full);
-    const chatBody = { model: cfg.model, stream:true, temperature: cfg.temperature ?? 0, messages:[ { role:'system', content: system }, { role:'user', content: userContent } ] };
+    const chatBody = { model: cfg.model, stream:true, temperature: cfg.temperature ?? 0, messages:[ { role:'system', content: system }, { role:'user', content: buildChatContent(userContent, images) } ] };
     // 复用 chat 流式函数（不触发回退逻辑）
-    yield* streamChatOpenAI({ ...cfg, apiKey }, { model: chatBody.model, temperature: chatBody.temperature, instructions: system, input:[ { role:'user', content:[{ type:'input_text', text: userContent }] } ] }, opts.signal);
+    yield* streamChatOpenAI({ ...cfg, apiKey }, { model: chatBody.model, temperature: chatBody.temperature, instructions: system, input:[ { role:'user', content: buildResponsesContent(userContent, images) } ] }, opts.signal);
     return;
   } else if (cfg.apiType === 'claude') {
   const full2 = renderTemplate(cfg.promptTemplate, { text, target_language: target });
@@ -143,7 +212,7 @@ export async function * translateStream(text, opts={}){
       temperature: cfg.temperature ?? 0,
       system,
       stream: true,
-      messages: [ { role:'user', content:[{ type:'text', text: user }] } ]
+      messages: [ { role:'user', content: buildClaudeContent(user, images) } ]
     };
   yield* streamClaude({ ...cfg, apiKey }, payload, opts.signal);
     return;
@@ -193,9 +262,17 @@ async function * streamChatOpenAI(cfg, payload, externalSignal){
   const controller = new AbortController();
   if (externalSignal) externalSignal.addEventListener('abort', ()=>controller.abort(), { once:true });
   const timeout = setTimeout(()=>controller.abort(), cfg.timeoutMs||30000);
-  const userItem = payload?.input?.[0]?.content?.[0]?.text || '';
+  const userContent = responsesContentToChat(payload?.input?.[0]?.content || []);
   const system = sanitizeSystem(payload.instructions||'');
-  const chatBody = { model: payload.model, stream:true, temperature: payload.temperature, messages:[ system?{ role:'system', content: system }:null, { role:'user', content: userItem } ].filter(Boolean) };
+  const chatBody = {
+    model: payload.model,
+    stream:true,
+    temperature: payload.temperature,
+    messages:[
+      system?{ role:'system', content: system }:null,
+      { role:'user', content: userContent.length > 0 ? userContent : '' }
+    ].filter(Boolean)
+  };
   let resp;
   try {
     resp = await fetch(cfg.baseUrl.replace(/\/$/,'') + '/chat/completions', { method:'POST', headers:{ 'Authorization':'Bearer '+(cfg.apiKey || cfg.apiKeyEnc), 'Content-Type':'application/json' }, body: JSON.stringify(chatBody), signal: controller.signal });

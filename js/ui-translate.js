@@ -27,6 +27,10 @@ const statusBar = document.getElementById('statusBar');
 const btnTranslate = document.getElementById('btnTranslate');
 const btnClear = document.getElementById('btnClear');
 const btnCopy = document.getElementById('btnCopy');
+const btnAddImage = document.getElementById('btnAddImage');
+const imagePicker = document.getElementById('imagePicker');
+const imageList = document.getElementById('imageList');
+const visionHint = document.getElementById('visionHint');
 
 const LANGS = [
   ['zh-CN','中文'],['en','English'],['ja','日本語'],['ko','한국어'],['fr','Français'],['de','Deutsch']
@@ -72,6 +76,8 @@ let outputRaw = '';
 // 文件字节上限：2 MB；文本字符上限：200,000 字符
 const MAX_FILE_BYTES = 2 * 1024 * 1024; // 2MB
 const MAX_INPUT_CHARS = 200000; // 200k chars
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB per image
+const MAX_IMAGE_COUNT = 8;
 function humanMiB(bytes){ return (bytes/1024/1024).toFixed(1); }
 
 // Markdown 工具
@@ -84,6 +90,183 @@ function renderMarkdown(text){
   if (!outputView) return;
   if (!text){ outputView.innerHTML=''; return; }
   outputView.innerHTML = mdRender.render(text);
+}
+
+// 视觉输入支持
+let imageAttachments = [];
+let imageCounter = 0;
+
+function makeImageName(explicit){
+  if (explicit) return explicit;
+  imageCounter += 1;
+  return `image-${imageCounter}`;
+}
+
+function isVisionEnabled(){
+  try {
+    const cfg = getActiveConfig();
+    return !!cfg.vision;
+  } catch { return false; }
+}
+
+function renderImageList(){
+  if (!imageList) return;
+  imageList.innerHTML='';
+  if (!imageAttachments.length) return;
+  for (const [idx,img] of imageAttachments.entries()){
+    const chip = document.createElement('div');
+    chip.className = 'attachment-chip';
+    const name = document.createElement('span');
+    name.className = 'chip-name';
+    name.textContent = img.name || `图片 ${idx+1}`;
+    const size = document.createElement('span');
+    size.style.color = 'var(--fg-dim)';
+    size.textContent = `${(img.size/1024).toFixed(0)} KB`;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = '×';
+    btn.title = '移除图片';
+    btn.addEventListener('click', ()=>{
+      imageAttachments.splice(idx,1);
+      renderImageList();
+      setStatus('已移除图片');
+    });
+    chip.append(name,size,btn);
+    imageList.appendChild(chip);
+  }
+}
+
+function refreshVisionState(msg=''){
+  const enabled = isVisionEnabled();
+  if (btnAddImage) btnAddImage.disabled = !enabled;
+  if (visionHint){
+    const text = msg || (enabled ? '已启用视觉输入，可上传图片' : '当前服务未启用视觉，无法上传图片');
+    visionHint.textContent = text;
+  }
+  if (!enabled && imageAttachments.length){
+    imageAttachments = [];
+    renderImageList();
+    setStatus('当前服务未启用视觉，已清空图片');
+  }
+}
+
+function parseDataTransferImages(fileList){
+  return Array.from(fileList||[]).filter(f=>f && f.type && f.type.startsWith('image/'));
+}
+
+function detectImagesFromEventData(dt){
+  const files = parseDataTransferImages(dt?.files||[]);
+  const html = typeof dt?.getData === 'function' ? (dt.getData('text/html') || '') : '';
+  const dataUrlImages = extractDataUrlImagesFromHtml(html);
+  return { files, dataUrlImages };
+}
+
+function extractDataUrlImagesFromHtml(html){
+  if (!html || typeof DOMParser === 'undefined') return [];
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const imgs = Array.from(doc.images||[]);
+  return imgs
+    .map(img=>img?.src||'')
+    .filter(src=>src.startsWith('data:image/'));
+}
+
+function dataUrlToMeta(dataUrl){
+  if (!dataUrl || !dataUrl.startsWith('data:image/')) return null;
+  const [header, base64] = dataUrl.split(',', 2);
+  if (!base64) return null;
+  const typeMatch = header.match(/data:(image\/[^;]+);base64/i);
+  const type = typeMatch ? typeMatch[1] : 'image/png';
+  // base64 字节估算：每 4 个字符约等于 3 个字节，需减去 padding
+  const size = Math.floor((base64.length * 3) / 4 - (base64.match(/=/g) || []).length);
+  return { type, size };
+}
+
+function readFileAsDataUrl(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = ()=>reject(reader.error);
+    reader.onload = ()=>resolve(reader.result);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function addImagesFromFiles(files, sourceLabel){
+  const list = parseDataTransferImages(files);
+  if (!list.length) return false;
+  if (!isVisionEnabled()){
+    setStatus('当前服务未启用视觉，无法接收图片');
+    return true;
+  }
+  if (imageAttachments.length + list.length > MAX_IMAGE_COUNT){
+    setStatus(`最多仅支持 ${MAX_IMAGE_COUNT} 张图片`);
+    return true;
+  }
+  let added = 0;
+  let tooLarge = 0;
+  let failed = 0;
+  for (const file of list){
+    if (file.size > MAX_IMAGE_BYTES){
+      tooLarge++;
+      continue;
+    }
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      imageAttachments.push({ name: makeImageName(file.name), type: file.type, size: file.size, dataUrl });
+      added++;
+    } catch { failed++; }
+  }
+  renderImageList();
+  if (added){
+    let msg = `${sourceLabel}已添加 ${added} 张图片`;
+    if (tooLarge) msg += `，${tooLarge} 张过大已跳过`;
+    if (failed) msg += `，${failed} 张读取失败`;
+    setStatus(msg);
+  } else if (tooLarge || failed){
+    const parts = [];
+    if (tooLarge) parts.push(`${tooLarge} 张图片过大（上限 ${humanMiB(MAX_IMAGE_BYTES)} MiB）`);
+    if (failed) parts.push(`${failed} 张读取失败`);
+    setStatus(parts.join('，') + '，已跳过');
+  }
+  return added>0;
+}
+
+async function addImagesFromDataUrls(urls, sourceLabel){
+  const list = (urls||[]).filter(u=>u && u.startsWith('data:image/'));
+  if (!list.length) return false;
+  if (!isVisionEnabled()){
+    setStatus('当前服务未启用视觉，无法接收图片');
+    return true;
+  }
+  if (imageAttachments.length + list.length > MAX_IMAGE_COUNT){
+    setStatus(`最多仅支持 ${MAX_IMAGE_COUNT} 张图片`);
+    return true;
+  }
+  let added = 0;
+  let tooLarge = 0;
+  let invalid = 0;
+  for (const dataUrl of list){
+    const meta = dataUrlToMeta(dataUrl);
+    if (!meta){ invalid++; continue; }
+    if (meta.size > MAX_IMAGE_BYTES){
+      tooLarge++;
+      continue;
+    }
+    imageAttachments.push({ name: makeImageName(), type: meta.type, size: meta.size, dataUrl });
+    added++;
+  }
+  renderImageList();
+  if (added){
+    let msg = `${sourceLabel}已添加 ${added} 张图片`;
+    if (tooLarge) msg += `，${tooLarge} 张过大已跳过`;
+    if (invalid) msg += `，${invalid} 张格式不支持`;
+    setStatus(msg);
+  } else if (tooLarge || invalid){
+    const parts = [];
+    if (tooLarge) parts.push(`${tooLarge} 张图片过大（上限 ${humanMiB(MAX_IMAGE_BYTES)} MiB）`);
+    if (invalid) parts.push(`${invalid} 张格式不支持`);
+    setStatus(parts.join('，') + '，已跳过');
+  }
+  return added>0;
 }
 
 // Token 计数：优先使用 gpt-tokenizer，失败则回退估算
@@ -149,13 +332,18 @@ function bindPasteToggle(){
 async function doTranslate(){
   if (streaming){ cancelStream(); return; }
   const text = getInputText().trim();
-  if (!text){ setStatus('请输入内容'); return; }
+  const images = [...imageAttachments];
+  if (!text && !images.length){ setStatus('请输入内容或添加图片'); return; }
   if (text.length > MAX_INPUT_CHARS){
     setStatus(`输入过大（>${MAX_INPUT_CHARS.toLocaleString()} 字符），请分段处理或精简后再试`);
     return;
   }
   // 读取有效配置（含服务级覆盖）
   const cfg = getActiveConfig();
+  if (!cfg.vision && images.length){
+    setStatus('当前服务未启用视觉，无法提交图片');
+    return;
+  }
   // 记录一次性的输入 token（后续状态复用）
   let inTokCached = null;
   let promptTokCached = null;
@@ -190,7 +378,7 @@ async function doTranslate(){
     let attempt=0;
     while(true){
       try {
-  const result = await translateOnce(text,{ targetLanguage: langSelect.value });
+  const result = await translateOnce(text,{ targetLanguage: langSelect.value, images });
   outputRaw = result;
   renderMarkdown(outputRaw);
   // 不再持久化输出
@@ -234,7 +422,7 @@ async function doTranslate(){
   while(true){
     let produced=false;
     try {
-      for await (const chunk of translateStream(text,{ targetLanguage: langSelect.value, signal: currentAbort.signal })){
+      for await (const chunk of translateStream(text,{ targetLanguage: langSelect.value, images, signal: currentAbort.signal })){
         if (typeof chunk === 'string'){ 
           produced=true; 
             buffer.pending += chunk; 
@@ -258,7 +446,7 @@ async function doTranslate(){
       if (!produced){
         try {
           setStatus('流式失败，回退非流式...');
-          const result = await translateOnce(text,{ targetLanguage: langSelect.value });
+          const result = await translateOnce(text,{ targetLanguage: langSelect.value, images });
           outputRaw = result;
           renderMarkdown(outputRaw);
           // 不再持久化输出
@@ -287,7 +475,7 @@ function resetButton(){
 }
 
 btnTranslate.addEventListener('click', doTranslate);
-btnClear.addEventListener('click', ()=>{ setInputText(''); outputRaw=''; renderMarkdown(''); setStatus('已清空'); inputEditor.focus(); });
+btnClear.addEventListener('click', ()=>{ setInputText(''); outputRaw=''; renderMarkdown(''); imageAttachments=[]; renderImageList(); setStatus('已清空'); inputEditor.focus(); });
 btnCopy.addEventListener('click', async()=>{ if (!outputRaw) return; const ok = await copyToClipboard(outputRaw); setStatus(ok?'已复制':'复制失败'); });
 outputView.addEventListener('keydown', e=>{
   if ((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='a'){
@@ -307,16 +495,23 @@ window.addEventListener('keydown', e=>{
 });
 
 // 拖拽 txt 文件或文本内容
-inputEl.addEventListener('dragover', e=>{ e.preventDefault(); });
-inputEl.addEventListener('drop', e=>{
+inputEl.addEventListener('dragover', e=>{ e.preventDefault(); }, true);
+inputEl.addEventListener('drop', async e=>{
   e.preventDefault();
-  // 需求：拖拽前先清空输入与输出
-  setInputText('');
-  outputRaw = '';
-  renderMarkdown('');
   const dt = e.dataTransfer;
-  const f = dt.files[0];
-  if (f){
+  const fileList = Array.from(dt.files||[]);
+  const imageFiles = parseDataTransferImages(fileList);
+  const nonImageFiles = fileList.filter(f=>!imageFiles.includes(f));
+  const html = typeof dt?.getData === 'function' ? (dt.getData('text/html') || '') : '';
+  const dataUrlImages = extractDataUrlImagesFromHtml(html);
+  if (imageFiles.length || dataUrlImages.length){
+    e.stopPropagation();
+    e.stopImmediatePropagation?.();
+    if (imageFiles.length){ await addImagesFromFiles(imageFiles, '拖拽'); }
+    if (dataUrlImages.length){ await addImagesFromDataUrls(dataUrlImages, '拖拽'); }
+  }
+  if (nonImageFiles.length){
+    const f = nonImageFiles[0];
     if (f.size > MAX_FILE_BYTES){
       setStatus(`文件过大（${humanMiB(f.size)} MiB），上限 ${humanMiB(MAX_FILE_BYTES)} MiB`);
       return;
@@ -330,12 +525,15 @@ inputEl.addEventListener('drop', e=>{
       f.name.endsWith('.markdown')
     ){
       const reader = new FileReader();
-      reader.onload = ()=>{ 
+      reader.onload = ()=>{
         const content = reader.result || '';
         if (content.length > MAX_INPUT_CHARS){
           setStatus(`文件内容过大（>${MAX_INPUT_CHARS.toLocaleString()} 字符），请分段处理`);
           return;
         }
+        setInputText('');
+        outputRaw = '';
+        renderMarkdown('');
         setInputText(content); setStatus('文件已载入'); };
       reader.readAsText(f);
     } else {
@@ -345,24 +543,51 @@ inputEl.addEventListener('drop', e=>{
   }
   const mode = getPasteMode();
   const text = dt.getData('text/plain');
+  if (!text) return;
+  setInputText('');
+  outputRaw = '';
+  renderMarkdown('');
   if (mode==='markdown'){
     const md = dt.getData('text/markdown');
-    if (md){ 
+    if (md){
       if (md.length > MAX_INPUT_CHARS){ setStatus(`内容过大（>${MAX_INPUT_CHARS.toLocaleString()} 字符）`); return; }
       setInputText(md); setStatus('Markdown 已载入'); return; }
     const html = dt.getData('text/html');
-    if (html){ 
+    if (html){
       const md2 = turndown.turndown(html);
       if (md2.length > MAX_INPUT_CHARS){ setStatus(`内容过大（>${MAX_INPUT_CHARS.toLocaleString()} 字符）`); return; }
       setInputText(md2); setStatus('HTML 已转换为 Markdown'); return; }
   const mdFromTsv = tsvToMarkdownIfTable(text);
-  if (mdFromTsv){ 
+  if (mdFromTsv){
     if (mdFromTsv.length > MAX_INPUT_CHARS){ setStatus(`内容过大（>${MAX_INPUT_CHARS.toLocaleString()} 字符）`); return; }
     setInputText(mdFromTsv); setStatus('检测到表格 (TSV) · 已转换为 Markdown'); return; }
   }
-  if (text){ 
+  if (text){
     if (text.length > MAX_INPUT_CHARS){ setStatus(`内容过大（>${MAX_INPUT_CHARS.toLocaleString()} 字符）`); return; }
     setInputText(text); setStatus('文本已载入'); }
+}, true);
+
+inputEl.addEventListener('paste', async e=>{
+  const { files, dataUrlImages } = detectImagesFromEventData(e.clipboardData);
+  if (files.length || dataUrlImages.length){
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation?.();
+    if (files.length){ await addImagesFromFiles(files, '粘贴'); }
+    else { await addImagesFromDataUrls(dataUrlImages, '粘贴'); }
+    return;
+  }
+}, true);
+
+btnAddImage?.addEventListener('click', ()=>{
+  if (!isVisionEnabled()){ setStatus('当前服务未启用视觉，无法上传图片'); return; }
+  imagePicker?.click();
+});
+
+imagePicker?.addEventListener('change', ()=>{
+  const files = Array.from(imagePicker.files||[]);
+  if (files.length){ addImagesFromFiles(files, '选择'); }
+  if (imagePicker) imagePicker.value = '';
 });
 
 // 使用 Quill Clipboard 模块处理粘贴
@@ -409,6 +634,8 @@ clipboard.onPaste = (range, { text, html }) => {
   populateLangs(cfg);
   populateServices(cfg);
   populatePrompts(cfg);
+  renderImageList();
+  refreshVisionState();
   // 不再恢复上次输入/输出
   bindPasteToggle();
 })();
@@ -420,6 +647,7 @@ clipboard.onPaste = (range, { text, html }) => {
 serviceSelect?.addEventListener('change', (e)=>{
   const id = e.target.value;
   setActiveService(id);
+  refreshVisionState();
 });
 
 promptSelect?.addEventListener('change', (e)=>{
@@ -433,6 +661,7 @@ window.addEventListener('ai-tr:config-changed', ()=>{
   populateServices(cfg);
   populateLangs(cfg);
   populatePrompts(cfg);
+  refreshVisionState();
 });
 
 // 跨标签页/窗口更新：监听 localStorage 变更
@@ -442,5 +671,6 @@ window.addEventListener('storage', (e)=>{
     populateServices(cfg);
     populateLangs(cfg);
     populatePrompts(cfg);
+    refreshVisionState();
   }
 });
