@@ -139,6 +139,12 @@ if (btnClearImages) btnClearImages.addEventListener('click', ()=>{
   closeImageManager();
 });
 
+// Add Escape key handler to close image manager modal
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && imgMgrOverlay && !imgMgrOverlay.hidden) {
+    closeImageManager();
+  }
+});
 function renderManagerList(){
   if (!imgMgrList) return;
   imgMgrList.innerHTML = '';
