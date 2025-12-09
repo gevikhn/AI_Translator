@@ -1,8 +1,9 @@
 /* Mobile UI Optimization */
-.controls-collapsible { display: contents; }
-.controls-actions { width: 100%; }
 
 @media (max-width: 600px) {
+  .controls-collapsible { display: contents; }
+  .controls-actions { width: 100%; }
+
   .layout { padding: 8px; gap: 8px; }
   
   .controls { gap: 8px; position: relative; }

@@ -91,6 +91,10 @@ input:focus,select:focus{outline:2px solid var(--accent);outline-offset:0}
 .modal-bar h2{margin:0;font-size:15px;font-weight:600}
 .modal-body{padding:16px;max-height:calc(100vh - 160px);overflow:auto;display:flex;flex-direction:column}
 /* Ensure settings modal uses side-by-side layout */
+/* Desktop layout for controls */
+.controls-collapsible, .controls-actions { display: contents; }
+.controls-actions .attachment-bar { width: 100%; }
+
 .modal-body.settings-body{flex-direction:row;align-items:flex-start}
 .settings-body form{flex:1}
 .flex-gap{flex:1}
