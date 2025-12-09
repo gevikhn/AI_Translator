@@ -222,9 +222,12 @@ function renderImageList(){
     btn.title = '移除图片';
     btn.addEventListener('click', (e)=>{
       e.stopPropagation(); // 防止触发其他点击
-      imageAttachments.splice(i,1);
-      renderImageList();
-      setStatus('已移除图片');
+      const currentIdx = imageAttachments.indexOf(img);
+      if (currentIdx !== -1) {
+        imageAttachments.splice(currentIdx, 1);
+        renderImageList();
+        setStatus('已移除图片');
+      }
     });
     chip.append(name,btn);
     imageList.appendChild(chip);
