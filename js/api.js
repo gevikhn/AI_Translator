@@ -42,11 +42,16 @@ function parseDataUrl(dataUrl){
   };
 }
 
+function isAsyncIterable(value){
+  return !!value && typeof value[Symbol.asyncIterator] === 'function';
+}
+
 function createOpenAIClient(cfg){
   const baseURL = (cfg.baseUrl || 'https://api.openai.com/v1').replace(/\/$/,'');
   const maxRetries = Number.isFinite(cfg.retries) ? cfg.retries : undefined;
+  if (!cfg.apiKey) throw makeError('AuthError','请在设置中填写 API Key');
   return new OpenAI({
-    apiKey: cfg.apiKey || cfg.apiKeyEnc,
+    apiKey: cfg.apiKey,
     baseURL,
     timeout: cfg.timeoutMs || 30000,
     ...(Number.isFinite(maxRetries) ? { maxRetries } : {}),
@@ -151,12 +156,12 @@ export async function translateOnce(text, opts={}){
       textOut = await postJsonOpenAI({ ...cfg, apiKey }, payload, (json)=>{
         if (json?.id) recordResponse(json.id, { store: !!cfg.storeResponses });
         return extractTextFromResponses(json);
-      });
+      }, opts.signal);
     } catch(e){
       // 针对部分老模型或不支持 responses 的情况回退 chat.completions
       if (e.name==='ApiError' && /(Invalid value: 'text'|404|not found|Unknown endpoint)/i.test(e.message)){
         const chatBody = { model: cfg.model, temperature: cfg.temperature ?? 0, messages:[ { role:'system', content: system }, { role:'user', content: chatContent } ] };
-        textOut = await postJsonChatOpenAI({ ...cfg, apiKey }, chatBody, extractTextFromResponses);
+        textOut = await postJsonChatOpenAI({ ...cfg, apiKey }, chatBody, extractTextFromResponses, opts.signal);
       } else throw e;
     }
     return textOut;
@@ -165,7 +170,7 @@ export async function translateOnce(text, opts={}){
     const full = renderTemplate(cfg.promptTemplate, { text, target_language: target });
     const system = sanitizeSystem(full);
     const chatBody = { model: cfg.model, temperature: cfg.temperature ?? 0, messages:[ { role:'system', content: system }, { role:'user', content: buildChatContent(userContent, images) } ] };
-    const out = await postJsonChatOpenAI({ ...cfg, apiKey }, chatBody, extractTextFromResponses);
+    const out = await postJsonChatOpenAI({ ...cfg, apiKey }, chatBody, extractTextFromResponses, opts.signal);
     return out;
   } else if (cfg.apiType === 'claude') {
     const full = renderTemplate(cfg.promptTemplate, { text, target_language: target });
@@ -259,22 +264,24 @@ export async function * translateStream(text, opts={}){
 }
 
 async function * streamOpenAI(cfg, payload, externalSignal){
-  const controller = new AbortController();
-  if (externalSignal) externalSignal.addEventListener('abort', ()=>controller.abort(), { once:true });
-  const timeout = setTimeout(()=>controller.abort(), cfg.timeoutMs||30000);
+  const signal = externalSignal;
   let stream;
+  const client = createOpenAIClient(cfg);
   try {
-    const client = createOpenAIClient(cfg);
-    stream = await client.responses.create(payload, { signal: controller.signal });
+    stream = await client.responses.create(payload, { signal });
   } catch(e){
-    clearTimeout(timeout);
     if (shouldFallbackToChat(e)){
       yield* streamChatOpenAI(cfg, payload, externalSignal);
       return;
     }
     throw toOpenAIAppError(e, { abortMessage: '已取消或超时' });
   }
-  clearTimeout(timeout);
+  if (!isAsyncIterable(stream) && typeof client.responses.stream === 'function'){
+    try { stream = client.responses.stream(payload, { signal }); } catch(e){ throw toOpenAIAppError(e, { abortMessage: '已取消或超时' }); }
+  }
+  if (!isAsyncIterable(stream)){
+    throw makeError('OpenAIStreamError','当前 OpenAI SDK 返回的 responses 流不可迭代，请升级 SDK 或关闭流式模式');
+  }
   let accumulated='';
   try {
     for await (const evt of stream){
@@ -291,9 +298,7 @@ async function * streamOpenAI(cfg, payload, externalSignal){
 // Chat Completions 流式回退实现
 async function * streamChatOpenAI(cfg, payload, externalSignal){
   // 将 responses payload 转换为 chat 格式
-  const controller = new AbortController();
-  if (externalSignal) externalSignal.addEventListener('abort', ()=>controller.abort(), { once:true });
-  const timeout = setTimeout(()=>controller.abort(), cfg.timeoutMs||30000);
+  const signal = externalSignal;
   const userContent = responsesContentToChat(payload?.input?.[0]?.content || []);
   const system = sanitizeSystem(payload.instructions||'');
   const chatBody = {
@@ -307,8 +312,13 @@ async function * streamChatOpenAI(cfg, payload, externalSignal){
   };
   const client = createOpenAIClient(cfg);
   try {
-    const stream = await client.chat.completions.create(chatBody, { signal: controller.signal });
-    clearTimeout(timeout);
+    let stream = await client.chat.completions.create(chatBody, { signal });
+    if (!isAsyncIterable(stream) && typeof client.chat.completions.stream === 'function'){
+      stream = client.chat.completions.stream(chatBody, { signal });
+    }
+    if (!isAsyncIterable(stream)){
+      throw makeError('OpenAIStreamError','当前 OpenAI SDK 返回的 chat.completions 流不可迭代，请升级 SDK 或关闭流式模式');
+    }
     let acc='';
     for await (const chunk of stream){
       const delta = chunk?.choices?.[0]?.delta?.content;
@@ -319,7 +329,7 @@ async function * streamChatOpenAI(cfg, payload, externalSignal){
     }
     return { done:true, meta:{ length: acc.length } };
   } catch(e){
-    clearTimeout(timeout);
+    if (e?.name === 'OpenAIStreamError') throw e;
     throw toOpenAIAppError(e, { abortMessage: '已取消或超时' });
   }
 }
@@ -347,10 +357,10 @@ async function * streamClaude(cfg, payload, externalSignal){
   return { done:true, meta:{ length:accumulated.length } };
 }
 
-async function postJsonOpenAI(cfg, payload, extractor){
+async function postJsonOpenAI(cfg, payload, extractor, signal){
   const client = createOpenAIClient(cfg);
   try {
-    const json = await client.responses.create(payload);
+    const json = await client.responses.create(payload, signal ? { signal } : undefined);
     return extractor(json) || '';
   } catch(e){
     throw toOpenAIAppError(e, { timeoutMessage: '请求超时' });
@@ -368,10 +378,10 @@ async function postJsonClaude(url, payload, apiKey, timeoutMs, extractor){
   } catch(e){ clearTimeout(timer); if (e.name==='AbortError') throw makeError('TimeoutError','请求超时'); throw makeError('NetworkError','网络错误或无法连接'); }
 }
 
-async function postJsonChatOpenAI(cfg, payload, extractor){
+async function postJsonChatOpenAI(cfg, payload, extractor, signal){
   const client = createOpenAIClient(cfg);
   try {
-    const json = await client.chat.completions.create(payload);
+    const json = await client.chat.completions.create(payload, signal ? { signal } : undefined);
     return extractor(json) || '';
   } catch(e){
     throw toOpenAIAppError(e, { timeoutMessage: '请求超时' });
