@@ -1,6 +1,7 @@
 // api.js
 // 说明：后续将实现 OpenAI Responses / Claude 适配。当前提供非流式 OpenAI 基础路径。
 
+import OpenAI from 'openai';
 import { renderTemplate } from './prompt.js';
 import { getActiveConfig, getApiKeyAuto } from './config.js';
 import { sseIterator } from './utils.js';
@@ -39,6 +40,47 @@ function parseDataUrl(dataUrl){
     mediaType: m?.[1] || 'image/png',
     data: m?.[2] || ''
   };
+}
+
+function isAsyncIterable(value){
+  return !!value && typeof value[Symbol.asyncIterator] === 'function';
+}
+
+function createOpenAIClient(cfg){
+  const baseURL = (cfg.baseUrl || 'https://api.openai.com/v1').replace(/\/$/,'');
+  const maxRetries = Number.isFinite(cfg.retries) ? cfg.retries : undefined;
+  if (!cfg.apiKey) throw makeError('AuthError','请在设置中填写 API Key');
+  return new OpenAI({
+    apiKey: cfg.apiKey,
+    baseURL,
+    timeout: cfg.timeoutMs || 30000,
+    ...(Number.isFinite(maxRetries) ? { maxRetries } : {}),
+    dangerouslyAllowBrowser: true
+  });
+}
+
+function getOpenAIErrorMessage(err){
+  return String(err?.error?.message || err?.message || '').trim();
+}
+
+function shouldFallbackToChat(err){
+  const msg = getOpenAIErrorMessage(err);
+  const status = err?.status;
+  return status === 404 || /404|not found|Unknown endpoint|Invalid value: 'text'/i.test(msg);
+}
+
+function toOpenAIAppError(err, { abortMessage='已取消或超时', timeoutMessage='请求超时' } = {}){
+  const status = err?.status;
+  const name = err?.name || '';
+  const msg = getOpenAIErrorMessage(err);
+  if (name === 'APIUserAbortError' || name === 'AbortError') return makeError('AbortError', abortMessage);
+  if (name === 'APIConnectionTimeoutError') return makeError('TimeoutError', timeoutMessage);
+  if (name === 'APIConnectionError') return makeError('NetworkError', '网络错误或无法连接');
+  if (status === 401 || status === 403) return makeError('AuthError','鉴权失败');
+  if (status) return makeError('ApiError', `API 错误: ${status} ${msg}`.trim());
+  if (/timeout/i.test(msg)) return makeError('TimeoutError', timeoutMessage);
+  if (msg) return makeError('ApiError', `API 错误: ${msg}`.trim());
+  return makeError('NetworkError','网络错误或无法连接');
 }
 
 function buildResponsesContent(userText, images){
@@ -111,15 +153,15 @@ export async function translateOnce(text, opts={}){
     };
     let textOut;
     try {
-  textOut = await postJson(cfg.baseUrl.replace(/\/$/,'') + '/responses', payload, apiKey, cfg.timeoutMs, (json)=>{
+      textOut = await postJsonOpenAI({ ...cfg, apiKey }, payload, (json)=>{
         if (json?.id) recordResponse(json.id, { store: !!cfg.storeResponses });
         return extractTextFromResponses(json);
-      });
+      }, opts.signal);
     } catch(e){
       // 针对部分老模型或不支持 responses 的情况回退 chat.completions
-      if (e.name==='ApiError' && /(Invalid value: 'text'|404|not found|Unknown endpoint)/i.test(e.message)){
+      if (e?.shouldFallbackToChat || (e.name==='ApiError' && /(Invalid value: 'text'|404|not found|Unknown endpoint)/i.test(e.message))){
         const chatBody = { model: cfg.model, temperature: cfg.temperature ?? 0, messages:[ { role:'system', content: system }, { role:'user', content: chatContent } ] };
-        textOut = await postJsonChat(cfg.baseUrl.replace(/\/$/,'') + '/chat/completions', chatBody, apiKey, cfg.timeoutMs, extractTextFromResponses);
+        textOut = await postJsonChatOpenAI({ ...cfg, apiKey }, chatBody, extractTextFromResponses, opts.signal);
       } else throw e;
     }
     return textOut;
@@ -128,7 +170,7 @@ export async function translateOnce(text, opts={}){
     const full = renderTemplate(cfg.promptTemplate, { text, target_language: target });
     const system = sanitizeSystem(full);
     const chatBody = { model: cfg.model, temperature: cfg.temperature ?? 0, messages:[ { role:'system', content: system }, { role:'user', content: buildChatContent(userContent, images) } ] };
-    const out = await postJsonChat(cfg.baseUrl.replace(/\/$/,'') + '/chat/completions', chatBody, apiKey, cfg.timeoutMs, extractTextFromResponses);
+    const out = await postJsonChatOpenAI({ ...cfg, apiKey }, chatBody, extractTextFromResponses, opts.signal);
     return out;
   } else if (cfg.apiType === 'claude') {
     const full = renderTemplate(cfg.promptTemplate, { text, target_language: target });
@@ -149,6 +191,7 @@ export async function translateOnce(text, opts={}){
 function extractTextFromResponses(obj){
   // 尝试多种路径
   if (!obj) return '';
+  if (typeof obj.output_text === 'string') return obj.output_text;
   // 新 Responses API: output[] -> content -> [{type:'output_text', text:'...'}]
   if (Array.isArray(obj.output)){
     let buf = '';
@@ -192,7 +235,7 @@ export async function * translateStream(text, opts={}){
       input: [ { role: 'user', content: inputContent } ],
       ...(cfg.storeResponses ? { metadata:{ store:true }, previous_response_id: previousResponseId() || undefined } : {})
     };
-  yield* streamOpenAI({ ...cfg, apiKey }, payload, opts.signal);
+    yield* streamOpenAI({ ...cfg, apiKey }, payload, opts.signal);
     return;
   } else if (cfg.apiType === 'openai-chat') {
     const userContent = `<translate_input>${text}</translate_input>`;
@@ -221,37 +264,33 @@ export async function * translateStream(text, opts={}){
 }
 
 async function * streamOpenAI(cfg, payload, externalSignal){
-  const controller = new AbortController();
-  if (externalSignal) externalSignal.addEventListener('abort', ()=>controller.abort(), { once:true });
-  const timeout = setTimeout(()=>controller.abort(), cfg.timeoutMs||30000);
-  let resp;
+  const signal = externalSignal;
+  let stream;
+  const client = createOpenAIClient(cfg);
   try {
-    resp = await fetch(cfg.baseUrl.replace(/\/$/,'') + '/responses', {
-  method:'POST', headers:{ 'Authorization':'Bearer '+(cfg.apiKey || cfg.apiKeyEnc), 'Content-Type':'application/json' }, body: JSON.stringify(payload), signal: controller.signal });
-  } catch(e){ clearTimeout(timeout); if (e.name==='AbortError') throw makeError('AbortError','已取消或超时'); throw makeError('NetworkError','网络错误'); }
-  clearTimeout(timeout);
-  if (!resp.ok){
-    const textErr = await resp.text().catch(()=>resp.statusText);
-    if (resp.status===401||resp.status===403) throw makeError('AuthError','鉴权失败');
-    // 回退到 chat.completions 流式
-    if (/404|not found|Unknown endpoint|Invalid value: 'text'/i.test(textErr)){
+    stream = await client.responses.create(payload, { signal });
+  } catch(e){
+    if (shouldFallbackToChat(e)){
       yield* streamChatOpenAI(cfg, payload, externalSignal);
       return;
     }
-    throw makeError('ApiError',`API 错误: ${resp.status} ${textErr.slice(0,200)}`);
+    throw toOpenAIAppError(e, { abortMessage: '已取消或超时' });
   }
-  if (!resp.body) throw makeError('StreamError','响应无正文');
+  if (!isAsyncIterable(stream) && typeof client.responses.stream === 'function'){
+    try { stream = client.responses.stream(payload, { signal }); } catch(e){ throw toOpenAIAppError(e, { abortMessage: '已取消或超时' }); }
+  }
+  if (!isAsyncIterable(stream)){
+    throw makeError('OpenAIStreamError','当前 OpenAI SDK 返回的 responses 流不可迭代，请升级 SDK 或关闭流式模式');
+  }
   let accumulated='';
-  for await (const evt of sseIterator(resp.body, controller.signal)){
-    for (const chunk of evt.data){
-      if (chunk==='[DONE]') return;
-      try {
-        const j = JSON.parse(chunk);
-        const t = extractDeltaFromOpenAIResponse(j);
-        if (t){ accumulated+=t; yield t; }
-        if (j.type==='response.completed') { if (j?.id) recordResponse(j.id, { store: !!cfg.storeResponses }); return; }
-      } catch(_){ }
+  try {
+    for await (const evt of stream){
+      const t = extractDeltaFromOpenAIResponse(evt);
+      if (t){ accumulated+=t; yield t; }
+      if (evt?.type==='response.completed') { if (evt?.id) recordResponse(evt.id, { store: !!cfg.storeResponses }); return; }
     }
+  } catch(e){
+    throw toOpenAIAppError(e, { abortMessage: '已取消或超时' });
   }
   return { done:true, meta:{ length:accumulated.length } };
 }
@@ -259,9 +298,7 @@ async function * streamOpenAI(cfg, payload, externalSignal){
 // Chat Completions 流式回退实现
 async function * streamChatOpenAI(cfg, payload, externalSignal){
   // 将 responses payload 转换为 chat 格式
-  const controller = new AbortController();
-  if (externalSignal) externalSignal.addEventListener('abort', ()=>controller.abort(), { once:true });
-  const timeout = setTimeout(()=>controller.abort(), cfg.timeoutMs||30000);
+  const signal = externalSignal;
   const userContent = responsesContentToChat(payload?.input?.[0]?.content || []);
   const system = sanitizeSystem(payload.instructions||'');
   const chatBody = {
@@ -273,21 +310,28 @@ async function * streamChatOpenAI(cfg, payload, externalSignal){
       { role:'user', content: userContent.length > 0 ? userContent : '' }
     ].filter(Boolean)
   };
-  let resp;
+  const client = createOpenAIClient(cfg);
   try {
-    resp = await fetch(cfg.baseUrl.replace(/\/$/,'') + '/chat/completions', { method:'POST', headers:{ 'Authorization':'Bearer '+(cfg.apiKey || cfg.apiKeyEnc), 'Content-Type':'application/json' }, body: JSON.stringify(chatBody), signal: controller.signal });
-  } catch(e){ clearTimeout(timeout); if (e.name==='AbortError') throw makeError('AbortError','已取消或超时'); throw makeError('NetworkError','网络错误'); }
-  clearTimeout(timeout);
-  if (!resp.ok){ const te = await resp.text().catch(()=>resp.statusText); if (resp.status===401||resp.status===403) throw makeError('AuthError','鉴权失败'); throw makeError('ApiError',`API 错误: ${resp.status} ${te.slice(0,200)}`); }
-  if (!resp.body) throw makeError('StreamError','响应无正文');
-  let acc='';
-  for await (const evt of sseIterator(resp.body, controller.signal)){
-    for (const d of evt.data){ if (d==='[DONE]') return { done:true, meta:{ length:acc.length } }; try { const j = JSON.parse(d); const delta = j?.choices?.[0]?.delta?.content; if (delta){
-          if (Array.isArray(delta)) { const s = delta.map(p=>p?.text||p).join(''); acc+=s; yield s; }
-          else if (typeof delta==='string'){ acc+=delta; yield delta; }
-        } } catch(_){} }
+    let stream = await client.chat.completions.create(chatBody, { signal });
+    if (!isAsyncIterable(stream) && typeof client.chat.completions.stream === 'function'){
+      stream = client.chat.completions.stream(chatBody, { signal });
+    }
+    if (!isAsyncIterable(stream)){
+      throw makeError('OpenAIStreamError','当前 OpenAI SDK 返回的 chat.completions 流不可迭代，请升级 SDK 或关闭流式模式');
+    }
+    let acc='';
+    for await (const chunk of stream){
+      const delta = chunk?.choices?.[0]?.delta?.content;
+      if (delta){
+        if (Array.isArray(delta)) { const s = delta.map(p=>p?.text||p).join(''); acc+=s; yield s; }
+        else if (typeof delta==='string'){ acc+=delta; yield delta; }
+      }
+    }
+    return { done:true, meta:{ length: acc.length } };
+  } catch(e){
+    if (e?.name === 'OpenAIStreamError') throw e;
+    throw toOpenAIAppError(e, { abortMessage: '已取消或超时' });
   }
-  return { done:true, meta:{ length: acc.length } };
 }
 
 async function * streamClaude(cfg, payload, externalSignal){
@@ -313,15 +357,17 @@ async function * streamClaude(cfg, payload, externalSignal){
   return { done:true, meta:{ length:accumulated.length } };
 }
 
-async function postJson(url, payload, apiKey, timeoutMs, extractor){
-  const controller = new AbortController();
-  const timer = setTimeout(()=>controller.abort(), timeoutMs||30000);
+async function postJsonOpenAI(cfg, payload, extractor, signal){
+  const client = createOpenAIClient(cfg);
   try {
-    const resp = await fetch(url, { method:'POST', headers:{ 'Authorization':'Bearer '+apiKey, 'Content-Type':'application/json' }, body: JSON.stringify(payload), signal: controller.signal });
-    clearTimeout(timer);
-    if (!resp.ok){ const t = await resp.text().catch(()=>resp.statusText); if (resp.status===401||resp.status===403) throw makeError('AuthError','鉴权失败'); throw makeError('ApiError',`API 错误: ${resp.status} ${t.slice(0,200)}`); }
-    const json = await resp.json(); return extractor(json) || '';
-  } catch(e){ clearTimeout(timer); if (e.name==='AbortError') throw makeError('TimeoutError','请求超时'); throw makeError('NetworkError','网络错误或无法连接'); }
+    const json = await client.responses.create(payload, signal ? { signal } : undefined);
+    return extractor(json) || '';
+  } catch(e){
+    const shouldFallback = shouldFallbackToChat(e);
+    const appError = toOpenAIAppError(e, { timeoutMessage: '请求超时' });
+    if (shouldFallback) appError.shouldFallbackToChat = true;
+    throw appError;
+  }
 }
 
 async function postJsonClaude(url, payload, apiKey, timeoutMs, extractor){
@@ -335,15 +381,14 @@ async function postJsonClaude(url, payload, apiKey, timeoutMs, extractor){
   } catch(e){ clearTimeout(timer); if (e.name==='AbortError') throw makeError('TimeoutError','请求超时'); throw makeError('NetworkError','网络错误或无法连接'); }
 }
 
-async function postJsonChat(url, payload, apiKey, timeoutMs, extractor){
-  const controller = new AbortController();
-  const timer = setTimeout(()=>controller.abort(), timeoutMs||30000);
+async function postJsonChatOpenAI(cfg, payload, extractor, signal){
+  const client = createOpenAIClient(cfg);
   try {
-    const resp = await fetch(url, { method:'POST', headers:{ 'Authorization':'Bearer '+apiKey, 'Content-Type':'application/json' }, body: JSON.stringify(payload), signal: controller.signal });
-    clearTimeout(timer);
-    if (!resp.ok){ const t = await resp.text().catch(()=>resp.statusText); if (resp.status===401||resp.status===403) throw makeError('AuthError','鉴权失败'); throw makeError('ApiError',`API 错误: ${resp.status} ${t.slice(0,200)}`); }
-    const json = await resp.json(); return extractor(json) || '';
-  } catch(e){ clearTimeout(timer); if (e.name==='AbortError') throw makeError('TimeoutError','请求超时'); throw makeError('NetworkError','网络错误或无法连接'); }
+    const json = await client.chat.completions.create(payload, signal ? { signal } : undefined);
+    return extractor(json) || '';
+  } catch(e){
+    throw toOpenAIAppError(e, { timeoutMessage: '请求超时' });
+  }
 }
 
 function extractTextFromClaudeResponse(obj){

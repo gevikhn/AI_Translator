@@ -17,6 +17,7 @@
   "dependencies": {
     "gpt-tokenizer": "^3.0.1",
     "markdown-it": "^14.1.0",
+    "openai": "^6.17.0",
     "quill": "^2.0.3",
     "quill-delta": "^5.1.0",
     "turndown": "^7.2.0",
