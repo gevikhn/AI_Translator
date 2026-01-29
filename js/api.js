@@ -159,7 +159,7 @@ export async function translateOnce(text, opts={}){
       }, opts.signal);
     } catch(e){
       // 针对部分老模型或不支持 responses 的情况回退 chat.completions
-      if (e.name==='ApiError' && /(Invalid value: 'text'|404|not found|Unknown endpoint)/i.test(e.message)){
+      if (e?.shouldFallbackToChat || (e.name==='ApiError' && /(Invalid value: 'text'|404|not found|Unknown endpoint)/i.test(e.message))){
         const chatBody = { model: cfg.model, temperature: cfg.temperature ?? 0, messages:[ { role:'system', content: system }, { role:'user', content: chatContent } ] };
         textOut = await postJsonChatOpenAI({ ...cfg, apiKey }, chatBody, extractTextFromResponses, opts.signal);
       } else throw e;
@@ -363,7 +363,10 @@ async function postJsonOpenAI(cfg, payload, extractor, signal){
     const json = await client.responses.create(payload, signal ? { signal } : undefined);
     return extractor(json) || '';
   } catch(e){
-    throw toOpenAIAppError(e, { timeoutMessage: '请求超时' });
+    const shouldFallback = shouldFallbackToChat(e);
+    const appError = toOpenAIAppError(e, { timeoutMessage: '请求超时' });
+    if (shouldFallback) appError.shouldFallbackToChat = true;
+    throw appError;
   }
 }
 
