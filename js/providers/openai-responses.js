@@ -35,7 +35,7 @@ async function createResponseWithCompat(client, payload, options){
   try {
     return await client.responses.create(payload, options);
   } catch (e){
-    if (!payload.store || !shouldRetryResponsesWithoutStore(e)) throw e;
+    if (!Object.prototype.hasOwnProperty.call(payload, 'store') || !shouldRetryResponsesWithoutStore(e)) throw e;
     const retryPayload = { ...payload };
     delete retryPayload.store;
     return client.responses.create(retryPayload, options);
