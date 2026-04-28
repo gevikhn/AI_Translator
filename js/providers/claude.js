@@ -18,9 +18,16 @@ function claudeUrl(cfg){
   return cfg.baseUrl.replace(/\/$/,'') + '/messages';
 }
 
-export async function translateClaudeOnce(cfg, req){
+export async function translateClaudeOnce(cfg, req, externalSignal){
   const controller = new AbortController();
-  const timer = setTimeout(()=>controller.abort(), cfg.timeoutMs||30000);
+  let timedOut = false;
+  const onExternalAbort = ()=>controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else if (externalSignal) externalSignal.addEventListener('abort', onExternalAbort, { once:true });
+  const timer = setTimeout(()=>{
+    timedOut = true;
+    controller.abort();
+  }, cfg.timeoutMs||30000);
   try {
     const resp = await fetch(claudeUrl(cfg), {
       method:'POST',
@@ -38,9 +45,14 @@ export async function translateClaudeOnce(cfg, req){
     return extractTextFromClaudeResponse(json) || '';
   } catch(e){
     clearTimeout(timer);
+    if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
     if (e.name === 'AuthError' || e.name === 'ApiError') throw e;
-    if (e.name==='AbortError') throw makeError('TimeoutError','请求超时');
+    if (e.name==='AbortError') throw makeError(timedOut ? 'TimeoutError' : 'AbortError', timedOut ? '请求超时' : '已取消');
     throw makeError('NetworkError','网络错误或无法连接');
+  }
+  finally {
+    clearTimeout(timer);
+    if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
   }
 }
 

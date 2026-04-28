@@ -139,7 +139,7 @@ function normalizeServices(arr){
     if (out.apiType === 'openai') out.apiType = 'openai-responses';
     if (!out.baseUrl) out.baseUrl = 'https://api.openai.com/v1';
     if (out.apiKeyEnc == null) out.apiKeyEnc = '';
-    if (!out.model || isDefaultModelValue(out.model)) out.model = defaultModelForApiType(out.apiType);
+    if (!out.model) out.model = defaultModelForApiType(out.apiType);
     if (out.vision === undefined) out.vision = true;
     else out.vision = !!out.vision;
     // 服务级别温度/最大输出 Token 的缺省与数值规范化
