@@ -52,7 +52,6 @@ export async function translateClaudeOnce(cfg, req, externalSignal){
       body: JSON.stringify(buildClaudePayload(cfg, req)),
       signal: controller.signal
     });
-    clearTimeout(timer);
     if (!resp.ok){
       const t = await resp.text().catch(()=>resp.statusText);
       if (resp.status===401||resp.status===403) throw makeError('AuthError','鉴权失败');
