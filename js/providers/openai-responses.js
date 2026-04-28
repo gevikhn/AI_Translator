@@ -24,10 +24,29 @@ function buildResponsesPayload(cfg, req, { stream=false } = {}){
   };
 }
 
+function shouldRetryResponsesWithoutStore(err){
+  const status = err?.status;
+  const msg = String(err?.error?.message || err?.message || '').trim();
+  if (!(status >= 400 && status < 500) || status === 401 || status === 403 || status === 404) return false;
+  return /store|unknown parameter|unsupported|unrecognized|additional properties|extra inputs are not permitted/i.test(msg);
+}
+
+async function createResponseWithCompat(client, payload, options){
+  try {
+    return await client.responses.create(payload, options);
+  } catch (e){
+    if (!payload.store || !shouldRetryResponsesWithoutStore(e)) throw e;
+    const retryPayload = { ...payload };
+    delete retryPayload.store;
+    return client.responses.create(retryPayload, options);
+  }
+}
+
 export async function translateOpenAIResponsesOnce(cfg, req, signal){
   const client = createOpenAIClient(cfg);
+  const payload = buildResponsesPayload(cfg, req);
   try {
-    const json = await client.responses.create(buildResponsesPayload(cfg, req), signal ? { signal } : undefined);
+    const json = await createResponseWithCompat(client, payload, signal ? { signal } : undefined);
     return extractTextFromOpenAIResponse(json) || '';
   } catch(e){
     if (shouldFallbackToChat(e)){
@@ -42,7 +61,7 @@ export async function * streamOpenAIResponses(cfg, req, signal){
   const payload = buildResponsesPayload(cfg, req, { stream:true });
   let stream;
   try {
-    stream = await client.responses.create(payload, { signal });
+    stream = await createResponseWithCompat(client, payload, { signal });
   } catch(e){
     if (shouldFallbackToChat(e)){
       yield* streamOpenAIChat(cfg, req, signal);
@@ -51,8 +70,9 @@ export async function * streamOpenAIResponses(cfg, req, signal){
     throw toOpenAIAppError(e, { abortMessage: '已取消或超时' });
   }
   if (!isAsyncIterable(stream) && typeof client.responses.stream === 'function'){
+    const streamPayload = payload.store === false ? (()=>{ const p = { ...payload }; delete p.store; return p; })() : payload;
     try {
-      stream = client.responses.stream(payload, { signal });
+      stream = client.responses.stream(streamPayload, { signal });
     } catch(e){
       throw toOpenAIAppError(e, { abortMessage: '已取消或超时' });
     }

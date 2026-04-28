@@ -18,16 +18,33 @@ function claudeUrl(cfg){
   return cfg.baseUrl.replace(/\/$/,'') + '/messages';
 }
 
+function startAbortTimer(controller, timeoutMs){
+  let timedOut = false;
+  let timeout = setTimeout(()=>{
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  return {
+    get timedOut(){ return timedOut; },
+    touch(){
+      clearTimeout(timeout);
+      timeout = setTimeout(()=>{
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
+    },
+    clear(){
+      clearTimeout(timeout);
+    }
+  };
+}
+
 export async function translateClaudeOnce(cfg, req, externalSignal){
   const controller = new AbortController();
-  let timedOut = false;
   const onExternalAbort = ()=>controller.abort();
   if (externalSignal?.aborted) controller.abort();
   else if (externalSignal) externalSignal.addEventListener('abort', onExternalAbort, { once:true });
-  const timer = setTimeout(()=>{
-    timedOut = true;
-    controller.abort();
-  }, cfg.timeoutMs||30000);
+  const timer = startAbortTimer(controller, cfg.timeoutMs||30000);
   try {
     const resp = await fetch(claudeUrl(cfg), {
       method:'POST',
@@ -45,11 +62,11 @@ export async function translateClaudeOnce(cfg, req, externalSignal){
     return extractTextFromClaudeResponse(json) || '';
   } catch(e){
     if (e.name === 'AuthError' || e.name === 'ApiError') throw e;
-    if (e.name==='AbortError') throw makeError(timedOut ? 'TimeoutError' : 'AbortError', timedOut ? '请求超时' : '已取消');
+    if (e.name==='AbortError') throw makeError(timer.timedOut ? 'TimeoutError' : 'AbortError', timer.timedOut ? '请求超时' : '已取消');
     throw makeError('NetworkError','网络错误或无法连接');
   }
   finally {
-    clearTimeout(timer);
+    timer.clear();
     if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
   }
 }
@@ -59,7 +76,7 @@ export async function * streamClaude(cfg, req, externalSignal){
   const onExternalAbort = ()=>controller.abort();
   if (externalSignal?.aborted) controller.abort();
   else if (externalSignal) externalSignal.addEventListener('abort', onExternalAbort, { once:true });
-  const timeout = setTimeout(()=>controller.abort(), cfg.timeoutMs||30000);
+  const timer = startAbortTimer(controller, cfg.timeoutMs||30000);
   try {
     let resp;
     try {
@@ -70,10 +87,10 @@ export async function * streamClaude(cfg, req, externalSignal){
         signal: controller.signal
       });
     } catch(e){
-      if (e.name==='AbortError') throw makeError('AbortError','已取消或超时');
+      if (e.name==='AbortError') throw makeError(timer.timedOut ? 'TimeoutError' : 'AbortError', timer.timedOut ? '请求超时' : '已取消');
       throw makeError('NetworkError','网络错误');
     }
-    clearTimeout(timeout);
+    timer.touch();
     if (!resp.ok){
       const textErr = await resp.text().catch(()=>resp.statusText);
       if (resp.status===401||resp.status===403) throw makeError('AuthError','鉴权失败');
@@ -82,6 +99,7 @@ export async function * streamClaude(cfg, req, externalSignal){
     if (!resp.body) throw makeError('StreamError','响应无正文');
     let accumulated='';
     for await (const evt of sseIterator(resp.body, controller.signal)){
+      timer.touch();
       if (evt.event === 'content_block_delta'){
         for (const d of evt.data){
           try {
@@ -99,7 +117,7 @@ export async function * streamClaude(cfg, req, externalSignal){
     }
     return { done:true, meta:{ length:accumulated.length } };
   } finally {
-    clearTimeout(timeout);
+    timer.clear();
     if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
   }
 }

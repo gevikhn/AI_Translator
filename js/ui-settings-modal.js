@@ -1,5 +1,5 @@
 // ui-settings-modal.js - 设置模态控制与表单逻辑复用
-import { loadConfig, saveConfig, validateConfig, exportConfig, importConfig, DEFAULT_PROMPT_TEMPLATE, encryptApiKey, encryptMasterPassword, decryptMasterPassword, ENC_META_KEY, MP_META_KEY, decryptApiKey, getActiveService, getActivePrompt, getActiveConfig, setActiveService, setActivePrompt, getApiKeyAuto, migrateConfig, defaultModelForApiType, isDefaultModelValue } from './config.js';
+import { loadConfig, saveConfig, validateConfig, exportConfig, importConfig, DEFAULT_PROMPT_TEMPLATE, encryptApiKey, encryptMasterPassword, decryptMasterPassword, ENC_META_KEY, MP_META_KEY, decryptApiKey, getActiveService, getActivePrompt, getActiveConfig, setActiveService, setActivePrompt, getApiKeyAuto, migrateConfig, defaultModelForApiType } from './config.js';
 
 const overlay = document.getElementById('settingsOverlay');
 const openBtn = document.getElementById('openSettings');
@@ -145,6 +145,8 @@ function loadIntoForm(){
   const tplArea = form.querySelector('[data-field=promptTemplate]');
   if (tplArea) tplArea.value = prompt.template || DEFAULT_PROMPT_TEMPLATE;
   fillLanguages(form.querySelector('[data-field=targetLanguage]'), cfg);
+  if (apiTypeField) apiTypeField.dataset.prevValue = svc.apiType || 'openai-responses';
+  if (modelField) delete modelField.dataset.userEdited;
   statusEl.textContent = '已加载';
 }
 
@@ -517,11 +519,18 @@ if (mpField){
 const apiTypeField = form.querySelector('[data-field=apiType]');
 const modelField = form.querySelector('[data-field=model]');
 if (apiTypeField && modelField){
+  const markModelUserEdited = ()=>{ modelField.dataset.userEdited = '1'; };
+  modelField.addEventListener('input', markModelUserEdited);
+  modelField.addEventListener('change', markModelUserEdited);
   apiTypeField.addEventListener('change', e=>{
+    const prevApiType = apiTypeField.dataset.prevValue || '';
     const current = String(modelField.value || '').trim();
-    if (!current || isDefaultModelValue(current)){
+    const unchangedDefault = !!current && current === defaultModelForApiType(prevApiType) && modelField.dataset.userEdited !== '1';
+    if (!current || unchangedDefault){
       modelField.value = defaultModelForApiType(e.target.value);
+      delete modelField.dataset.userEdited;
     }
+    apiTypeField.dataset.prevValue = e.target.value;
   });
 }
 
