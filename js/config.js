@@ -2,8 +2,25 @@
 // 负责：配置数据结构、默认值、加载/保存、校验、加解密 & 迁移（支持多服务配置）
 
 const STORAGE_KEY = 'AI_TR_CFG';
-const CONFIG_VERSION = 2;
+const CONFIG_VERSION = 3;
 const LEGACY_KEYS = ['AI_TR_CFG_V1'];
+export const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
+export const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-7';
+
+const DEFAULT_MODEL_VALUES = new Set([
+  DEFAULT_OPENAI_MODEL,
+  DEFAULT_CLAUDE_MODEL,
+  'gpt-4o-mini',
+  'claude-3-5-sonnet'
+]);
+
+export function defaultModelForApiType(apiType){
+  return apiType === 'claude' ? DEFAULT_CLAUDE_MODEL : DEFAULT_OPENAI_MODEL;
+}
+
+export function isDefaultModelValue(model){
+  return DEFAULT_MODEL_VALUES.has(String(model || '').trim());
+}
 
 /** 默认 Prompt 模板（异步加载外部文件后回填） */
 export let DEFAULT_PROMPT_TEMPLATE = `加载中...`;
@@ -35,14 +52,12 @@ const defaultConfig = {
   targetLanguage: 'zh-CN',
   stream: true,
   temperature: 0,
-  maxTokens: undefined,
   timeoutMs: 30000,
   retries: 2,
   // 图片压缩配置
   imageCompression: true,
   imageQuality: 0.8,
   // theme 已移除，由 UI 侧边栏开关管理（localStorage: AI_TR_THEME_MODE）
-  storeResponses: false,
   // 多服务
   services: [
     {
@@ -51,11 +66,11 @@ const defaultConfig = {
       apiType: 'openai-responses', // openai-responses | openai-chat | claude
       baseUrl: 'https://api.openai.com/v1',
       apiKeyEnc: '',
-      model: 'gpt-4o-mini',
+      model: DEFAULT_OPENAI_MODEL,
       vision: true,
-      // 将温度与最大 Token 改为服务级别配置（兼容：若不存在则回退到全局默认值）
+      // 将温度与最大输出 Token 改为服务级别配置
       temperature: 0,
-      maxTokens: undefined
+      maxOutputTokens: undefined
     }
   ],
   activeServiceId: 'svc-1',
@@ -124,14 +139,16 @@ function normalizeServices(arr){
     if (out.apiType === 'openai') out.apiType = 'openai-responses';
     if (!out.baseUrl) out.baseUrl = 'https://api.openai.com/v1';
     if (out.apiKeyEnc == null) out.apiKeyEnc = '';
-    if (!out.model) out.model = 'gpt-4o-mini';
+    if (!out.model || isDefaultModelValue(out.model)) out.model = defaultModelForApiType(out.apiType);
     if (out.vision === undefined) out.vision = true;
     else out.vision = !!out.vision;
-    // 服务级别温度/最大 Token 的缺省与数值规范化
+    // 服务级别温度/最大输出 Token 的缺省与数值规范化
     if (out.temperature === undefined || out.temperature === '') out.temperature = 0;
     else out.temperature = Number(out.temperature);
-    if (out.maxTokens === undefined || out.maxTokens === '') out.maxTokens = undefined;
-    else out.maxTokens = Number(out.maxTokens);
+    if (out.maxOutputTokens === undefined && out.maxTokens !== undefined) out.maxOutputTokens = out.maxTokens;
+    delete out.maxTokens;
+    if (out.maxOutputTokens === undefined || out.maxOutputTokens === '') out.maxOutputTokens = undefined;
+    else out.maxOutputTokens = Number(out.maxOutputTokens);
     return out;
   });
 }
@@ -156,15 +173,16 @@ function migrateToMultiServices(dataIn){
     apiType: data.apiType || 'openai-responses',
     baseUrl: data.baseUrl || 'https://api.openai.com/v1',
     apiKeyEnc: data.apiKeyEnc || '',
-    model: data.model || 'gpt-4o-mini',
+    model: data.model || defaultModelForApiType(data.apiType || 'openai-responses'),
     vision: data.vision === undefined ? true : !!data.vision,
     // 将旧的全局 temperature / maxTokens 迁移到首个服务
     temperature: (data.temperature!==undefined && data.temperature!=='') ? Number(data.temperature) : 0,
-    maxTokens: (data.maxTokens!==undefined && data.maxTokens!=='') ? Number(data.maxTokens) : undefined
+    maxOutputTokens: (data.maxOutputTokens!==undefined && data.maxOutputTokens!=='') ? Number(data.maxOutputTokens)
+      : ((data.maxTokens!==undefined && data.maxTokens!=='') ? Number(data.maxTokens) : undefined)
   };
   if (service.apiType === 'openai') service.apiType = 'openai-responses';
-  delete data.apiType; delete data.baseUrl; delete data.apiKeyEnc; delete data.model;
-  // 迁移后保留全局 temperature/maxTokens 作为回退默认，但优先使用服务级值
+  delete data.apiType; delete data.baseUrl; delete data.apiKeyEnc; delete data.model; delete data.maxTokens; delete data.maxOutputTokens;
+  // 迁移后保留全局 temperature 作为回退默认，但优先使用服务级值
   const merged = { ...defaultConfig, ...data, services: [ service ], activeServiceId: 'svc-1' };
   // 迁移旧 API 元数据到服务专属键
   try {
@@ -181,13 +199,24 @@ export function migrateConfig(dataIn){
   if (!Array.isArray(data.services)){
     data = migrateToMultiServices(data);
   }
+  if (Array.isArray(data.services)){
+    data.services = data.services.map(s=>{
+      const out = { ...s };
+      if (out.maxOutputTokens === undefined && out.maxTokens !== undefined) out.maxOutputTokens = out.maxTokens;
+      delete out.maxTokens;
+      return out;
+    });
+  }
+  delete data.maxTokens;
+  delete data.storeResponses;
   if (ver < 2){
     const tpl = data.promptTemplate && data.promptTemplate !== '加载中...' ? data.promptTemplate : DEFAULT_PROMPT_TEMPLATE;
     data.prompts = [{ id:'p-1', name:'默认 Prompt', template: tpl }];
     data.activePromptId = 'p-1';
     delete data.promptTemplate;
-    data.version = 2;
   }
+  data.services = normalizeServices(data.services);
+  data.version = CONFIG_VERSION;
   return data;
 }
 
@@ -229,7 +258,9 @@ export function loadConfig(){
     if ('useMasterPassword' in data) delete data.useMasterPassword;
     if ('apiKey' in data) delete data.apiKey;
     if (Array.isArray(data.services)) data.services = data.services.map(s=>{ const o={...s}; if ('apiKey' in o) delete o.apiKey; return o; });
-    ['temperature','maxTokens','timeoutMs','retries'].forEach(k=>{ if (data[k]!==undefined && data[k]!=='' ) data[k] = Number(data[k]); });
+    ['temperature','timeoutMs','retries'].forEach(k=>{ if (data[k]!==undefined && data[k]!=='' ) data[k] = Number(data[k]); });
+    delete data.maxTokens;
+    delete data.storeResponses;
     return { ...defaultConfig, ...data };
   } catch(e){
     console.warn('Failed to load config', e);
@@ -241,6 +272,8 @@ export function saveConfig(cfg){
   const clean = { ...defaultConfig, ...cfg };
   clean.version = CONFIG_VERSION;
   if ('theme' in clean) delete clean.theme; // 主题配置已废弃，不再持久化
+  delete clean.maxTokens;
+  delete clean.storeResponses;
   clean.services = normalizeServices(clean.services);
   if (!clean.activeServiceId) clean.activeServiceId = clean.services[0].id;
   clean.prompts = normalizePrompts(clean.prompts);
@@ -249,7 +282,7 @@ export function saveConfig(cfg){
   if ('useMasterPassword' in clean) delete clean.useMasterPassword;
   // 确保不落盘任意明文字段 apiKey
   if ('apiKey' in clean) delete clean.apiKey;
-  clean.services = clean.services.map(s=>{ const o={...s}; if ('apiKey' in o) delete o.apiKey; return o; });
+  clean.services = clean.services.map(s=>{ const o={...s}; if ('apiKey' in o) delete o.apiKey; delete o.maxTokens; return o; });
   localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
   try {
     // 通知同页其他模块（例如翻译页下拉）进行刷新
@@ -438,8 +471,10 @@ export async function getApiKeyAuto(){
 // ===== 导出/导入 =====
 export function exportConfig(cfg, { safe=false } = {}){
   const toSave = { ...cfg };
+  delete toSave.maxTokens;
+  delete toSave.storeResponses;
   if ('apiKey' in toSave) delete toSave.apiKey;
-  if (Array.isArray(toSave.services)) toSave.services = toSave.services.map(s=>{ const o={...s}; if ('apiKey' in o) delete o.apiKey; return o; });
+  if (Array.isArray(toSave.services)) toSave.services = toSave.services.map(s=>{ const o={...s}; if ('apiKey' in o) delete o.apiKey; delete o.maxTokens; return o; });
   // 附加每个服务的加密元数据（用于跨设备恢复）
   try {
     const map = {};
