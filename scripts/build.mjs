@@ -75,17 +75,16 @@ async function run({ watch=false }={}){
     ],
     bundle: true,
     format: 'esm',
-    splitting: true,
+    splitting: false,
     sourcemap,
     outdir: path.join(distDir,'js'),
     target: 'es2020',
     treeShaking: true,
     minify: true,
-    chunkNames: 'chunks/[name]-[hash]',
     banner: { js: '// Built by build.mjs' }
   }).catch(e=>{ console.error(e); process.exit(1); });
 
-  // The service worker caches the app shell and lets chunks warm through normal fetches.
+  // Keep app-shell assets self-contained so the service worker does not need a chunk manifest.
   try {
     const manifestPath = path.join(distDir, 'js', 'chunk-manifest.json');
     if (fs.existsSync(manifestPath)) fs.rmSync(manifestPath, { force:true });
