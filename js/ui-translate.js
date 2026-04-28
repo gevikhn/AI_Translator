@@ -460,21 +460,8 @@ async function addImagesFromDataUrls(urls, sourceLabel){
   return added>0;
 }
 
-// Token 计数：优先使用 gpt-tokenizer，失败则回退估算
-let __encodeFn = null; // lazy-loaded
-async function countTokensAccurate(str){
-  if (!str) return 0;
-  if (!__encodeFn){
-    try {
-      const mod = await import('gpt-tokenizer');
-      __encodeFn = mod.encode || null;
-    } catch { __encodeFn = null; }
-  }
-  if (__encodeFn){
-    try { return __encodeFn(String(str)).length; } catch { /* fallthrough */ }
-  }
-  // 回退：粗略估算（平均 4 字符 ≈ 1 token）
-  return estimateTokens(String(str));
+function countTokensApprox(str){
+  return estimateTokens(String(str || ''));
 }
 
 // 轻量 TSV -> Markdown 表格转换（用于无 HTML 时的粘贴/拖拽兜底）
@@ -535,26 +522,9 @@ async function doTranslate(){
     setStatus('当前服务未启用视觉，无法提交图片');
     return;
   }
-  // 记录一次性的输入 token（后续状态复用）
-  let inTokCached = null;
-  let promptTokCached = null;
-  // Max Tokens 约束：在发送前进行 token 预估，避免超限
-  if (cfg.maxTokens && Number(cfg.maxTokens) > 0){
-    try {
-      const inTok = await countTokensAccurate(text);
-      inTokCached = inTok;
-      const promptText = renderTemplate(cfg.promptTemplate, { text, target_language: langSelect.value });
-      const promptTok = await countTokensAccurate(promptText);
-      promptTokCached = promptTok;
-      // 预留少量提示词/包装开销
-      const overhead = 64;
-      const totalIn = inTok + promptTok + overhead;
-      if (totalIn > Number(cfg.maxTokens)){
-        setStatus(`输入+Prompt 预估约 ${totalIn.toLocaleString()} token（in:${inTok}, prompt:${promptTok}），超过 Max Tokens (${Number(cfg.maxTokens).toLocaleString()})，已取消。`);
-        return;
-      }
-    } catch { /* 忽略计数失败，按无约束继续 */ }
-  }
+  const promptTextForStatus = renderTemplate(cfg.promptTemplate, { text, target_language: langSelect.value });
+  const inTokCached = countTokensApprox(text);
+  const promptTokCached = countTokensApprox(promptTextForStatus);
   const maxRetries = Number(cfg.retries||0);
   outputRaw='';
   renderMarkdown('');
@@ -574,10 +544,7 @@ async function doTranslate(){
   renderMarkdown(outputRaw);
   // 不再持久化输出
         const ms = Math.round(performance.now()-start);
-  const inTok = inTokCached ?? (inTokCached = await countTokensAccurate(text));
-  const promptText = renderTemplate(cfg.promptTemplate, { text, target_language: langSelect.value });
-  const promptTok = promptTokCached ?? (promptTokCached = await countTokensAccurate(promptText));
-  setStatus(`完成 ${ms}ms | in:${inTok} / prompt:${promptTok} token` + (attempt?` | 重试${attempt}`:''));
+  setStatus(`完成 ${ms}ms | ≈in:${inTokCached} / prompt:${promptTokCached} token` + (attempt?` | 重试${attempt}`:''));
         break;
       } catch(e){
         if (e.name==='AbortError'){ setStatus('已取消'); break; }
@@ -597,10 +564,6 @@ async function doTranslate(){
   currentAbort = new AbortController();
   const buffer = { pending:'' };
   let flushScheduled = false;
-  // 流式 token 状态节流，降低频繁计算开销
-  const TOKEN_STATUS_INTERVAL = 200; // ms
-  let lastTokenUpdate = 0;
-  let tokenCalcPending = false;
   const scheduleFlush = ()=>{
     if (flushScheduled) return; flushScheduled = true;
     requestAnimationFrame(()=>{
@@ -622,10 +585,7 @@ async function doTranslate(){
       }
   if (buffer.pending){ outputRaw += buffer.pending; buffer.pending=''; renderMarkdown(outputRaw); }
       const ms = Math.round(performance.now()-start);
-      const inTok = inTokCached ?? (inTokCached = await countTokensAccurate(text));
-      const promptText = renderTemplate(cfg.promptTemplate, { text, target_language: langSelect.value });
-      const promptTok = promptTokCached ?? (promptTokCached = await countTokensAccurate(promptText));
-  setStatus(`完成 ${ms}ms | in:${inTok} / prompt:${promptTok} token` + (attempt?` | 重试${attempt}`:''));
+  setStatus(`完成 ${ms}ms | ≈in:${inTokCached} / prompt:${promptTokCached} token` + (attempt?` | 重试${attempt}`:''));
       break;
     } catch(e){
       if (e.name === 'AbortError'){ setStatus('已取消'); break; }
@@ -642,10 +602,7 @@ async function doTranslate(){
           renderMarkdown(outputRaw);
           // 不再持久化输出
           const ms = Math.round(performance.now()-start);
-          const inTok2 = inTokCached ?? (inTokCached = await countTokensAccurate(text));
-          const promptText2 = renderTemplate(cfg.promptTemplate, { text, target_language: langSelect.value });
-          const promptTok2 = promptTokCached ?? (promptTokCached = await countTokensAccurate(promptText2));
-          setStatus(`回退完成 ${ms}ms | in:${inTok2} / prompt:${promptTok2} token`);
+          setStatus(`回退完成 ${ms}ms | ≈in:${inTokCached} / prompt:${promptTokCached} token`);
         } catch(e2){ setStatus(e.message||'流式失败'); }
       } else {
         setStatus(e.message||'流式失败');

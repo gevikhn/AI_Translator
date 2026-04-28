@@ -1,5 +1,5 @@
 // ui-settings-modal.js - 设置模态控制与表单逻辑复用
-import { loadConfig, saveConfig, validateConfig, exportConfig, importConfig, DEFAULT_PROMPT_TEMPLATE, encryptApiKey, encryptMasterPassword, decryptMasterPassword, ENC_META_KEY, MP_META_KEY, decryptApiKey, getActiveService, getActivePrompt, getActiveConfig, setActiveService, setActivePrompt, getApiKeyAuto, migrateConfig } from './config.js';
+import { loadConfig, saveConfig, validateConfig, exportConfig, importConfig, DEFAULT_PROMPT_TEMPLATE, encryptApiKey, encryptMasterPassword, decryptMasterPassword, ENC_META_KEY, MP_META_KEY, decryptApiKey, getActiveService, getActivePrompt, getActiveConfig, setActiveService, setActivePrompt, getApiKeyAuto, migrateConfig, defaultModelForApiType } from './config.js';
 
 const overlay = document.getElementById('settingsOverlay');
 const openBtn = document.getElementById('openSettings');
@@ -13,8 +13,6 @@ const btnExport = document.getElementById('btnExport');
 const btnExportSafe = document.getElementById('btnExportSafe');
 const btnImport = document.getElementById('btnImport');
 const btnImportUrl = document.getElementById('btnImportUrl');
-const btnNewSession = document.getElementById('btnNewSession');
-const btnDeleteSession = document.getElementById('btnDeleteSession');
 // actions sidebar collapse
 const actionsPanel = document.querySelector('.settings-actions');
 const toggleActions = document.getElementById('toggleSettingsActions');
@@ -116,7 +114,7 @@ function loadIntoForm(){
   [...form.querySelectorAll('[data-field]')].forEach(el=>{
     const key = el.getAttribute('data-field');
     if (['apiKey','masterPassword','promptTemplate'].includes(key)) return; // 这些字段单独处理
-    const serviceKeys = ['apiType','baseUrl','model','vision','temperature','maxTokens'];
+    const serviceKeys = ['apiType','baseUrl','model','vision','temperature','maxOutputTokens'];
     if (serviceKeys.includes(key)){
       if (el.type==='checkbox') el.checked = !!svc[key]; else el.value = svc[key] == null ? '' : svc[key];
     } else {
@@ -147,6 +145,8 @@ function loadIntoForm(){
   const tplArea = form.querySelector('[data-field=promptTemplate]');
   if (tplArea) tplArea.value = prompt.template || DEFAULT_PROMPT_TEMPLATE;
   fillLanguages(form.querySelector('[data-field=targetLanguage]'), cfg);
+  if (apiTypeField) apiTypeField.dataset.prevValue = svc.apiType || 'openai-responses';
+  if (modelField) delete modelField.dataset.userEdited;
   statusEl.textContent = '已加载';
 }
 
@@ -176,7 +176,7 @@ form.addEventListener('submit', async e=>{
     const key = el.getAttribute('data-field');
     if (key === 'apiKey' || key === 'masterPassword' || key === 'promptTemplate') return; // 跳过保存明文字段
     const val = el.type==='checkbox' ? el.checked : el.value.trim();
-    if (['apiType','baseUrl','model','vision','temperature','maxTokens'].includes(key)) svc[key] = val;
+    if (['apiType','baseUrl','model','vision','temperature','maxOutputTokens'].includes(key)) svc[key] = val;
     else next[key] = val;
   });
   const prompt = { ...getActivePrompt(cfg) };
@@ -193,7 +193,8 @@ form.addEventListener('submit', async e=>{
   // 数字规范化：全局与服务级分别处理
   ['timeoutMs','retries','imageQuality'].forEach(k=>{ if (next[k]!==undefined && next[k] !== '') next[k] = Number(next[k]); });
   if (svc.temperature!==undefined && svc.temperature!=='') svc.temperature = Number(svc.temperature); else svc.temperature = 0;
-  if (svc.maxTokens!==undefined && svc.maxTokens!=='') svc.maxTokens = Number(svc.maxTokens); else svc.maxTokens = undefined;
+  if (svc.maxOutputTokens!==undefined && svc.maxOutputTokens!=='') svc.maxOutputTokens = Number(svc.maxOutputTokens); else svc.maxOutputTokens = undefined;
+  delete svc.maxTokens;
   const mp = qsMaster();
   let masterChanged = false;
   let newMasterPlain = '';
@@ -472,9 +473,6 @@ btnImportUrl.addEventListener('click', async()=>{
   catch { statusEl.textContent='导入失败: URL 不合法'; return; }
   await runImport(()=> importConfig(url.toString()));
 });
-btnNewSession.addEventListener('click', ()=>{ statusEl.textContent='(未来: 新建会话)'; });
-btnDeleteSession.addEventListener('click', ()=>{ statusEl.textContent='(未来: 删除会话)'; });
-
 // 监听 API Key 输入变更标记
 const apiField = form.querySelector('[data-field=apiKey]');
 if (apiField){
@@ -518,13 +516,31 @@ if (mpField){
   mpField.addEventListener('input', e=>{ e.target.dataset.changed='1'; });
 }
 
+const apiTypeField = form.querySelector('[data-field=apiType]');
+const modelField = form.querySelector('[data-field=model]');
+if (apiTypeField && modelField){
+  const markModelUserEdited = ()=>{ modelField.dataset.userEdited = '1'; };
+  modelField.addEventListener('input', markModelUserEdited);
+  modelField.addEventListener('change', markModelUserEdited);
+  apiTypeField.addEventListener('change', e=>{
+    const prevApiType = apiTypeField.dataset.prevValue || '';
+    const current = String(modelField.value || '').trim();
+    const unchangedDefault = !!current && current === defaultModelForApiType(prevApiType) && modelField.dataset.userEdited !== '1';
+    if (!current || unchangedDefault){
+      modelField.value = defaultModelForApiType(e.target.value);
+      delete modelField.dataset.userEdited;
+    }
+    apiTypeField.dataset.prevValue = e.target.value;
+  });
+}
+
 // 服务切换/新增/删除
 svcSelect?.addEventListener('change', (e)=>{ setActiveService(e.target.value); loadIntoForm(); unlockedPlainKey=null; });
 btnAddSvc?.addEventListener('click', ()=>{
   const cfg = loadConfig();
   const idx = (cfg.services||[]).length + 1;
   const id = `svc-${Date.now()}-${idx}`;
-  const base = { id, name:`服务${idx}`, apiType:'openai-responses', baseUrl:'https://api.openai.com/v1', apiKeyEnc:'', model:'gpt-4o-mini', vision: true, temperature: 0, maxTokens: undefined };
+  const base = { id, name:`服务${idx}`, apiType:'openai-responses', baseUrl:'https://api.openai.com/v1', apiKeyEnc:'', model: defaultModelForApiType('openai-responses'), vision: true, temperature: 0, maxOutputTokens: undefined };
   cfg.services = [...(cfg.services||[]), base];
   cfg.activeServiceId = id;
   saveConfig(cfg); loadIntoForm(); statusEl.textContent = '已新增服务配置';

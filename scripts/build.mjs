@@ -51,6 +51,7 @@ function copyStatics(){
 
 async function run({ watch=false }={}){
   const skipClean = process.argv.includes('--no-clean');
+  const sourcemap = process.argv.includes('--sourcemap');
   if (!skipClean){ rmDirSafe(distDir); }
   ensureDir(distDir); copyStatics();
   const idxPath = path.join(distDir,'index.html');
@@ -70,38 +71,25 @@ async function run({ watch=false }={}){
       path.join(root,'js','ui-translate.js'),
       path.join(root,'js','ui-settings-modal.js'),
       path.join(root,'js','theme.js'),
-      // path.join(root,'js','ui-settings.js'),
-      path.join(root,'js','api.js'),
-      path.join(root,'js','config.js'),
-      path.join(root,'js','prompt.js'),
-      path.join(root,'js','session.js'),
-      path.join(root,'js','utils.js'),
       path.join(root,'js','pwa.js')
     ],
     bundle: true,
     format: 'esm',
-    splitting: true,
-    sourcemap: true,
+    splitting: false,
+    sourcemap,
     outdir: path.join(distDir,'js'),
     target: 'es2020',
     treeShaking: true,
     minify: true,
-    chunkNames: 'chunks/[name]-[hash]',
     banner: { js: '// Built by build.mjs' }
   }).catch(e=>{ console.error(e); process.exit(1); });
 
-  // generate chunk manifest for service worker precache
+  // Keep app-shell assets self-contained so the service worker does not need a chunk manifest.
   try {
-    const chunksDir = path.join(distDir, 'js', 'chunks');
-    if (fs.existsSync(chunksDir)) {
-      const files = fs.readdirSync(chunksDir)
-        .filter(f => f.endsWith('.js'))
-        .map(f => `./js/chunks/${f}`);
-      const manifestPath = path.join(distDir, 'js', 'chunk-manifest.json');
-      fs.writeFileSync(manifestPath, JSON.stringify(files, null, 2));
-    }
+    const manifestPath = path.join(distDir, 'js', 'chunk-manifest.json');
+    if (fs.existsSync(manifestPath)) fs.rmSync(manifestPath, { force:true });
   } catch (e) {
-    console.warn('chunk manifest generation failed', e);
+    console.warn('stale chunk manifest cleanup failed', e);
   }
   if (watch){
     console.log('[watch] build completed. Watching for changes...');
