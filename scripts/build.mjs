@@ -3,6 +3,7 @@
 // 增强：Windows 下偶发 dist 目录被占用导致 EPERM。rmDirSafe 添加重试 + 重命名回退；可通过 --no-clean 跳过删除。
 import { build } from 'esbuild';
 import fs from 'fs';
+import MarkdownIt from 'markdown-it';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -49,11 +50,101 @@ function copyStatics(){
   copyDir(path.join(root,'css'), path.join(distDir,'css'));
 }
 
+function renderPrivacyPage(){
+  const src = path.join(root, 'PRIVACY.md');
+  if (!fs.existsSync(src)) return;
+  const md = new MarkdownIt({ html:false, linkify:true, typographer:true });
+  const content = md.render(fs.readFileSync(src, 'utf8'));
+  const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>隐私权政策 / Privacy Policy - AI Translator</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f7f5;
+      --paper: #ffffff;
+      --text: #1f2933;
+      --muted: #5f6b7a;
+      --border: #d9dee7;
+      --accent: #0f766e;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #101418;
+        --paper: #171d22;
+        --text: #e7edf3;
+        --muted: #aab4c0;
+        --border: #303a45;
+        --accent: #5eead4;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.65;
+    }
+    main {
+      width: min(920px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 48px 0 64px;
+    }
+    article {
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: clamp(24px, 5vw, 52px);
+    }
+    h1 {
+      margin: 0 0 28px;
+      font-size: clamp(2rem, 6vw, 3.25rem);
+      line-height: 1.12;
+    }
+    h2 {
+      margin: 48px 0 18px;
+      padding-top: 28px;
+      border-top: 1px solid var(--border);
+      font-size: 1.55rem;
+    }
+    h3 {
+      margin: 30px 0 10px;
+      color: var(--accent);
+      font-size: 1.1rem;
+    }
+    p { margin: 0 0 16px; }
+    code {
+      padding: 0.12em 0.34em;
+      border-radius: 4px;
+      background: color-mix(in srgb, var(--muted) 14%, transparent);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 0.92em;
+    }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main>
+    <article>
+${content}
+    </article>
+  </main>
+</body>
+</html>
+`;
+  fs.writeFileSync(path.join(distDir, 'privacy.html'), html);
+}
+
 async function run({ watch=false }={}){
   const skipClean = process.argv.includes('--no-clean');
   const sourcemap = process.argv.includes('--sourcemap');
   if (!skipClean){ rmDirSafe(distDir); }
   ensureDir(distDir); copyStatics();
+  renderPrivacyPage();
   const idxPath = path.join(distDir,'index.html');
   if (fs.existsSync(idxPath)){
     try {
@@ -96,7 +187,7 @@ async function run({ watch=false }={}){
     console.log('[watch] build completed. Watching for changes...');
     // 重新实现简单监听（可改用 esbuild context.watch）
     const debounce = (fn, ms)=>{ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; };
-    const toWatch = ['js','css','index.html', 'default.prompt', 'sw.js', 'manifest.webmanifest'];
+    const toWatch = ['js','css','index.html', 'default.prompt', 'sw.js', 'manifest.webmanifest', 'PRIVACY.md'];
     const watcher = fs.watch(root,{ recursive:true }, debounce((evt, filename)=>{
       if (!filename) return; if (!toWatch.some(p=> filename.startsWith(p))) return;
       console.log('[watch] change detected:', filename);
