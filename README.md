@@ -32,6 +32,14 @@ npm run build
 ```
 输出位于 `dist/`，包含：HTML / css / assets / default.prompt / 打包产物 js。构建脚本会写入版本号与构建时间（用于页眉显示）。
 
+### Chrome 扩展
+```
+npm run build:extension
+```
+输出位于 `dist-extension/`。在 Chrome 打开 `chrome://extensions`，启用开发者模式，选择“加载已解压的扩展程序”，加载 `dist-extension/`。
+
+扩展复用当前 Web UI 作为 Side Panel。网页中选中文本后，右键点击“翻译选中文本”，侧边栏会载入选中文本并自动翻译。扩展环境和普通网页环境使用各自的本地配置，如 API Key 尚未配置，请先在扩展侧边栏中打开“设置”保存服务配置。
+
 ### 开发（监听）
 ```
 npm run watch
@@ -47,7 +55,7 @@ npm run preview
 ```
 npm run clean
 ```
-支持 Windows 可能的 EPERM 重试与 `--no-clean` 选项（保留上次构建）。
+清理 `dist/` 与 `dist-extension/`。构建脚本支持 Windows 可能的 EPERM 重试与 `--no-clean` 选项（保留上次构建）。
 
 ## 部署
 项目配置了 GitHub Actions 自动部署到 GitHub Pages。当代码推送到 `main` 分支时，会自动执行以下步骤：

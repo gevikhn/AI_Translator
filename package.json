@@ -1,10 +1,12 @@
 {
   "name": "ai-translator",
-  "version": "1.5.0",
+  "version": "1.5.2",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build:extension": "node scripts/build-extension.mjs",
+    "package:extension": "node scripts/package-extension.mjs",
     "watch": "node scripts/build.mjs --watch",
     "clean": "node scripts/clean.mjs",
     "preview": "node scripts/serve.mjs --watch"

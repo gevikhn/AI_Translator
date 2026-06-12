@@ -3,18 +3,19 @@
 import { renderTemplate } from './prompt.js';
 import { getActiveConfig, getApiKeyAuto } from './config.js';
 import { makeError, normalizeImages, sanitizeSystem } from './providers/common.js';
+import { isMasterPasswordErrorMessage, t } from './i18n.js';
 import { translateOpenAIResponsesOnce, streamOpenAIResponses } from './providers/openai-responses.js';
 import { translateOpenAIChatOnce, streamOpenAIChat } from './providers/openai-chat.js';
 import { translateClaudeOnce, streamClaude } from './providers/claude.js';
 
 async function getRuntimeConfig(){
   const cfg = getActiveConfig();
-  if (!cfg.apiKeyEnc) throw makeError('ConfigError','请在设置中填写 API Key');
+  if (!cfg.apiKeyEnc) throw makeError('ConfigError', t('config.apiKeyMissing'));
   let apiKey;
   try {
     apiKey = await getApiKeyAuto();
   } catch(e){
-    if (/主密码不正确/.test(e.message)) throw makeError('AuthError','主密码错误，无法解锁 API Key');
+    if (isMasterPasswordErrorMessage(e.message)) throw makeError('AuthError', t('config.masterPasswordWrongUnlock'));
     throw e;
   }
   return { ...cfg, apiKey };
@@ -45,7 +46,7 @@ export async function translateOnce(text, opts={}){
   if (cfg.apiType === 'openai-responses') return translateOpenAIResponsesOnce(cfg, req, opts.signal);
   if (cfg.apiType === 'openai-chat') return translateOpenAIChatOnce(cfg, req, opts.signal);
   if (cfg.apiType === 'claude') return translateClaudeOnce(cfg, req, opts.signal);
-  throw makeError('NotImplemented','未知 apiType');
+  throw makeError('NotImplemented', t('config.unknownApiType'));
 }
 
 /**
@@ -69,5 +70,5 @@ export async function * translateStream(text, opts={}){
     yield* streamClaude(cfg, req, opts.signal);
     return;
   }
-  throw makeError('NotImplemented','未知 apiType');
+  throw makeError('NotImplemented', t('config.unknownApiType'));
 }

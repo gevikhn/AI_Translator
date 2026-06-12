@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { t } from '../i18n.js';
 
 export function makeError(name, message, extra){
   const e = new Error(message);
@@ -41,10 +42,15 @@ export function positiveInt(value){
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
 }
 
+export function optionalTemperature(value){
+  const n = Number(value);
+  return Number.isFinite(n) && n !== 0 ? n : undefined;
+}
+
 export function createOpenAIClient(cfg){
   const baseURL = (cfg.baseUrl || 'https://api.openai.com/v1').replace(/\/$/,'');
   const maxRetries = Number.isFinite(cfg.retries) ? cfg.retries : undefined;
-  if (!cfg.apiKey) throw makeError('AuthError','请在设置中填写 API Key');
+  if (!cfg.apiKey) throw makeError('AuthError', t('config.apiKeyMissing'));
   return new OpenAI({
     apiKey: cfg.apiKey,
     baseURL,
@@ -64,18 +70,25 @@ export function shouldFallbackToChat(err){
   return status === 404 || /404|not found|Unknown endpoint|Invalid value: 'text'/i.test(msg);
 }
 
-export function toOpenAIAppError(err, { abortMessage='已取消或超时', timeoutMessage='请求超时' } = {}){
+export function shouldRetryWithoutTemperature(err){
+  const status = err?.status;
+  const msg = getOpenAIErrorMessage(err);
+  if (!(status >= 400 && status < 500) || status === 401 || status === 403 || status === 404) return false;
+  return /temperature/i.test(msg) && /unsupported|not supported|unknown parameter|unrecognized|extra inputs|additional properties/i.test(msg);
+}
+
+export function toOpenAIAppError(err, { abortMessage=t('api.abortOrTimeout'), timeoutMessage=t('api.timeout') } = {}){
   const status = err?.status;
   const name = err?.name || '';
   const msg = getOpenAIErrorMessage(err);
   if (name === 'APIUserAbortError' || name === 'AbortError') return makeError('AbortError', abortMessage);
   if (name === 'APIConnectionTimeoutError') return makeError('TimeoutError', timeoutMessage);
-  if (name === 'APIConnectionError') return makeError('NetworkError', '网络错误或无法连接');
-  if (status === 401 || status === 403) return makeError('AuthError','鉴权失败');
-  if (status) return makeError('ApiError', `API 错误: ${status} ${msg}`.trim());
+  if (name === 'APIConnectionError') return makeError('NetworkError', t('api.network'));
+  if (status === 401 || status === 403) return makeError('AuthError', t('api.auth'));
+  if (status) return makeError('ApiError', t('api.errorWithStatus', { status, message: msg }).trim());
   if (/timeout/i.test(msg)) return makeError('TimeoutError', timeoutMessage);
-  if (msg) return makeError('ApiError', `API 错误: ${msg}`.trim());
-  return makeError('NetworkError','网络错误或无法连接');
+  if (msg) return makeError('ApiError', t('api.error', { message: msg }).trim());
+  return makeError('NetworkError', t('api.network'));
 }
 
 export function buildResponsesContent(userText, images){
