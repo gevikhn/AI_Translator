@@ -43,7 +43,7 @@ function copyDir(srcDir, destDir){
 }
 
 function copyStatics(){
-  const staticFiles = ['index.html', 'default.prompt',"favicon.png",'manifest.webmanifest','sw.js','js/theme-init.js'];
+  const staticFiles = ['index.html', 'default.prompt',"favicon.png",'manifest.webmanifest','sw.js','js/theme-init.js','PRIVACY.md'];
   for (const f of staticFiles){ const src = path.join(root, f); if (fs.existsSync(src)) copyFile(src, path.join(distDir, f)); }
   copyDir(path.join(root,'assets'), path.join(distDir,'assets'));
   copyDir(path.join(root,'css'), path.join(distDir,'css'));
@@ -70,6 +70,7 @@ async function run({ watch=false }={}){
     entryPoints: [
       path.join(root,'js','ui-translate.js'),
       path.join(root,'js','ui-settings-modal.js'),
+      path.join(root,'js','extension-bridge.js'),
       path.join(root,'js','theme.js'),
       path.join(root,'js','pwa.js')
     ],

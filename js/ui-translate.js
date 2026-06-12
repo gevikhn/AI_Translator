@@ -3,6 +3,7 @@ import { loadConfig, setActiveService, setActivePrompt, getActiveConfig } from '
 import { renderTemplate } from './prompt.js';
 import { translateOnce, translateStream } from './api.js';
 import { copyToClipboard, estimateTokens } from './utils.js';
+import { applyI18n, getTargetLanguageOptions, isMasterPasswordErrorMessage, isUnsupportedCipherErrorMessage, t } from './i18n.js';
 import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
 import MarkdownIt from 'markdown-it';
@@ -15,7 +16,7 @@ const promptSelect = document.getElementById('promptSelect');
 const inputEditor = new Quill('#inputText', {
   modules: { toolbar: false },
   theme: 'snow',
-  placeholder: '在此粘贴或拖拽待翻译文本（含 .txt 文件）'
+  placeholder: t('placeholder.input')
 });
 const inputEl = inputEditor.root;
 inputEl.setAttribute('spellcheck','false');
@@ -32,15 +33,11 @@ const imagePicker = document.getElementById('imagePicker');
 const imageList = document.getElementById('imageList');
 const visionHint = document.getElementById('visionHint');
 
-const LANGS = [
-  ['zh-CN','中文'],['en','English'],['ja','日本語'],['ko','한국어'],['fr','Français'],['de','Deutsch']
-];
-
 // 已移除输入/输出本地持久化（模态设置页场景不再需要恢复上次内容）
 
 function populateLangs(cfg){
   langSelect.innerHTML = '';
-  for (const [val,label] of LANGS){
+  for (const [val,label] of getTargetLanguageOptions()){
     const o = document.createElement('option');
     o.value = val; o.textContent = label; if (val===cfg.targetLanguage) o.selected = true; langSelect.appendChild(o);
   }
@@ -67,6 +64,25 @@ function populatePrompts(cfg){
 }
 
 function setStatus(msg){ statusBar.textContent = msg; }
+
+function setCommandButtonLabel(btn, key){
+  if (!btn) return;
+  const text = t(key);
+  const label = btn.querySelector('.btn-label');
+  if (label) label.textContent = text;
+  else btn.textContent = text;
+  btn.title = text;
+  btn.setAttribute('aria-label', text);
+}
+
+function setTranslateButtonMode(cancel=false){
+  setCommandButtonLabel(btnTranslate, cancel ? 'action.cancel' : 'action.translate');
+  btnTranslate?.classList.toggle('is-cancel', cancel);
+}
+
+function joinStatusParts(parts){
+  return parts.filter(Boolean).join(t('text.listSeparator'));
+}
 
 let currentAbort = null;
 let streaming = false;
@@ -135,7 +151,7 @@ if (btnClearImages) btnClearImages.addEventListener('click', ()=>{
   imageAttachments = [];
   renderManagerList();
   renderImageList();
-  setStatus('已清空所有图片');
+  setStatus(t('status.imageCleared'));
   closeImageManager();
 });
 
@@ -149,7 +165,7 @@ function renderManagerList(){
   if (!imgMgrList) return;
   imgMgrList.innerHTML = '';
   if (!imageAttachments.length){
-    imgMgrList.textContent = '暂无图片';
+    imgMgrList.textContent = t('status.noImages');
     return;
   }
   imageAttachments.forEach((img, idx) => {
@@ -160,13 +176,13 @@ function renderManagerList(){
       const thumb = document.createElement('img');
       thumb.src = img.dataUrl;
       thumb.className = 'chip-thumb';
-      thumb.alt = img.name || `图片 ${idx+1}`;
+      thumb.alt = img.name || `${t('action.image')} ${idx+1}`;
       chip.appendChild(thumb);
     }
 
     const name = document.createElement('span');
     name.className = 'chip-name';
-    name.textContent = img.name || `图片 ${idx+1}`;
+    name.textContent = img.name || `${t('action.image')} ${idx+1}`;
     
     const size = document.createElement('span');
     size.style.color = 'var(--fg-dim)';
@@ -176,12 +192,12 @@ function renderManagerList(){
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = '×';
-    btn.title = '移除图片';
+    btn.title = t('status.imageRemoved');
     btn.addEventListener('click', ()=>{
       imageAttachments.splice(idx,1);
       renderManagerList();
       renderImageList();
-      setStatus('已移除图片');
+      setStatus(t('status.imageRemoved'));
     });
     chip.append(name, size, btn);
     imgMgrList.appendChild(chip);
@@ -208,26 +224,26 @@ function renderImageList(){
       const thumb = document.createElement('img');
       thumb.src = img.dataUrl;
       thumb.className = 'chip-thumb';
-      thumb.alt = img.name || `图片 ${i+1}`;
+      thumb.alt = img.name || `${t('action.image')} ${i+1}`;
       chip.appendChild(thumb);
     }
 
     const name = document.createElement('span');
     name.className = 'chip-name';
-    name.textContent = img.name || `图片 ${i+1}`;
+    name.textContent = img.name || `${t('action.image')} ${i+1}`;
     chip.title = `${img.name} (${(img.size/1024).toFixed(0)} KB)`;
 
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = '×';
-    btn.title = '移除图片';
+    btn.title = t('status.imageRemoved');
     btn.addEventListener('click', (e)=>{
       e.stopPropagation(); // 防止触发其他点击
       const currentIdx = imageAttachments.indexOf(img);
       if (currentIdx !== -1) {
         imageAttachments.splice(currentIdx, 1);
         renderImageList();
-        setStatus('已移除图片');
+        setStatus(t('status.imageRemoved'));
       }
     });
     chip.append(name,btn);
@@ -238,7 +254,7 @@ function renderImageList(){
     const moreChip = document.createElement('div');
     moreChip.className = 'attachment-chip more-chip';
     moreChip.textContent = `+${count - MAX_PREVIEW}`;
-    moreChip.title = '查看所有图片';
+    moreChip.title = t('modal.imageManager');
     moreChip.addEventListener('click', openImageManager);
     imageList.appendChild(moreChip);
   }
@@ -248,12 +264,12 @@ function refreshVisionState(msg=''){
   const enabled = isVisionEnabled();
   if (btnAddImage) {
     btnAddImage.disabled = !enabled;
-    btnAddImage.title = enabled ? '添加图片' : '当前服务不支持视觉输入';
+    btnAddImage.title = enabled ? t('action.image') : t('status.visionUnsupported');
   }
   if (visionHint){
     // 仅在禁用或有特定消息时显示提示，避免占用空间
     if (!enabled || msg) {
-      visionHint.textContent = msg || '当前服务未启用视觉';
+      visionHint.textContent = msg || t('status.visionDisabled');
       visionHint.style.display = '';
     } else {
       visionHint.textContent = '';
@@ -263,7 +279,7 @@ function refreshVisionState(msg=''){
   if (!enabled && imageAttachments.length){
     imageAttachments = [];
     renderImageList();
-    setStatus('当前服务未启用视觉，已清空图片');
+    setStatus(t('status.visionDisabledCleared'));
   }
 }
 
@@ -347,11 +363,11 @@ async function addImagesFromFiles(files, sourceLabel){
   const list = parseDataTransferImages(files);
   if (!list.length) return false;
   if (!isVisionEnabled()){
-    setStatus('当前服务未启用视觉，无法接收图片');
+    setStatus(t('status.visionDisabledReceive'));
     return true;
   }
   if (imageAttachments.length + list.length > MAX_IMAGE_COUNT){
-    setStatus(`最多仅支持 ${MAX_IMAGE_COUNT} 张图片`);
+    setStatus(t('status.imageTooMany', { max: MAX_IMAGE_COUNT }));
     return true;
   }
   
@@ -387,15 +403,15 @@ async function addImagesFromFiles(files, sourceLabel){
   }
   renderImageList();
   if (added){
-    let msg = `${sourceLabel}已添加 ${added} 张图片`;
-    if (tooLarge) msg += `，${tooLarge} 张过大已跳过`;
-    if (failed) msg += `，${failed} 张读取失败`;
+    let msg = t('status.imageAdded', { source: sourceLabel, count: added });
+    if (tooLarge) msg += t('text.listSeparator') + t('status.imageTooLargeSkipped', { count: tooLarge });
+    if (failed) msg += t('text.listSeparator') + t('status.imageReadFailedSkipped', { count: failed });
     setStatus(msg);
   } else if (tooLarge || failed){
     const parts = [];
-    if (tooLarge) parts.push(`${tooLarge} 张图片过大（上限 ${humanMiB(MAX_IMAGE_BYTES)} MiB）`);
-    if (failed) parts.push(`${failed} 张读取失败`);
-    setStatus(parts.join('，') + '，已跳过');
+    if (tooLarge) parts.push(t('status.imageTooLarge', { count: tooLarge, max: humanMiB(MAX_IMAGE_BYTES) }));
+    if (failed) parts.push(t('status.imageReadFailed', { count: failed }));
+    setStatus(t('status.imageSkipped', { text: joinStatusParts(parts) }));
   }
   return added>0;
 }
@@ -404,11 +420,11 @@ async function addImagesFromDataUrls(urls, sourceLabel){
   const list = (urls||[]).filter(u=>u && u.startsWith('data:image/'));
   if (!list.length) return false;
   if (!isVisionEnabled()){
-    setStatus('当前服务未启用视觉，无法接收图片');
+    setStatus(t('status.visionDisabledReceive'));
     return true;
   }
   if (imageAttachments.length + list.length > MAX_IMAGE_COUNT){
-    setStatus(`最多仅支持 ${MAX_IMAGE_COUNT} 张图片`);
+    setStatus(t('status.imageTooMany', { max: MAX_IMAGE_COUNT }));
     return true;
   }
 
@@ -447,15 +463,15 @@ async function addImagesFromDataUrls(urls, sourceLabel){
   }
   renderImageList();
   if (added){
-    let msg = `${sourceLabel}已添加 ${added} 张图片`;
-    if (tooLarge) msg += `，${tooLarge} 张过大已跳过`;
-    if (invalid) msg += `，${invalid} 张格式不支持`;
+    let msg = t('status.imageAdded', { source: sourceLabel, count: added });
+    if (tooLarge) msg += t('text.listSeparator') + t('status.imageTooLargeSkipped', { count: tooLarge });
+    if (invalid) msg += t('text.listSeparator') + t('status.imageInvalidSkipped', { count: invalid });
     setStatus(msg);
   } else if (tooLarge || invalid){
     const parts = [];
-    if (tooLarge) parts.push(`${tooLarge} 张图片过大（上限 ${humanMiB(MAX_IMAGE_BYTES)} MiB）`);
-    if (invalid) parts.push(`${invalid} 张格式不支持`);
-    setStatus(parts.join('，') + '，已跳过');
+    if (tooLarge) parts.push(t('status.imageTooLarge', { count: tooLarge, max: humanMiB(MAX_IMAGE_BYTES) }));
+    if (invalid) parts.push(t('status.imageInvalid', { count: invalid }));
+    setStatus(t('status.imageSkipped', { text: joinStatusParts(parts) }));
   }
   return added>0;
 }
@@ -493,7 +509,7 @@ function updatePasteToggleUI(){
   const iconMd = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 19V5l5 5 5-5v14"></path><path d="M21 5v14"></path></svg>';
   const iconPlain = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M3 12h14M3 18h10"></path></svg>';
   const isMd = mode==='markdown';
-  btn.title = isMd ? '粘贴保留格式 (Markdown)' : '粘贴为纯文本';
+  btn.title = isMd ? t('paste.markdown') : t('paste.plain');
   btn.setAttribute('aria-label', btn.title);
   btn.innerHTML = isMd ? iconMd : iconPlain;
   btn.setAttribute('aria-pressed', String(isMd));
@@ -511,15 +527,15 @@ async function doTranslate(){
   if (streaming){ cancelStream(); return; }
   const text = getInputText().trim();
   const images = [...imageAttachments];
-  if (!text && !images.length){ setStatus('请输入内容或添加图片'); return; }
+  if (!text && !images.length){ setStatus(t('status.emptyInput')); return; }
   if (text.length > MAX_INPUT_CHARS){
-    setStatus(`输入过大（>${MAX_INPUT_CHARS.toLocaleString()} 字符），请分段处理或精简后再试`);
+    setStatus(t('status.inputTooLarge', { max: MAX_INPUT_CHARS.toLocaleString() }));
     return;
   }
   // 读取有效配置（含服务级覆盖）
   const cfg = getActiveConfig();
   if (!cfg.vision && images.length){
-    setStatus('当前服务未启用视觉，无法提交图片');
+    setStatus(t('status.visionDisabledSubmit'));
     return;
   }
   const promptTextForStatus = renderTemplate(cfg.promptTemplate, { text, target_language: langSelect.value });
@@ -529,34 +545,35 @@ async function doTranslate(){
   outputRaw='';
   renderMarkdown('');
   // 不再持久化输出
-  btnTranslate.textContent = cfg.stream ? '取消 (Esc)' : '翻译 (Ctrl+Enter)';
+  setTranslateButtonMode(!!cfg.stream);
   btnTranslate.classList.toggle('danger', cfg.stream);
   btnTranslate.disabled = false;
-  setStatus(cfg.stream ? '流式中...' : '请求中...');
+  setStatus(cfg.stream ? t('status.streaming') : t('status.requesting'));
   const start = performance.now();
   if (!cfg.stream){
     streaming = true;
+    currentAbort = new AbortController();
     let attempt=0;
     while(true){
       try {
-  const result = await translateOnce(text,{ targetLanguage: langSelect.value, images });
+  const result = await translateOnce(text,{ targetLanguage: langSelect.value, images, signal: currentAbort.signal });
   outputRaw = result;
   renderMarkdown(outputRaw);
   // 不再持久化输出
         const ms = Math.round(performance.now()-start);
-  setStatus(`完成 ${ms}ms | ≈in:${inTokCached} / prompt:${promptTokCached} token` + (attempt?` | 重试${attempt}`:''));
+  setStatus(t('status.done', { ms, inTokens: inTokCached, promptTokens: promptTokCached, retry: attempt ? t('status.retrySuffix', { count: attempt }) : '' }));
         break;
       } catch(e){
-        if (e.name==='AbortError'){ setStatus('已取消'); break; }
-        if (/主密码错误|密文格式不支持/.test(e.message||'') || /AuthError/.test(e.name)){
-          setStatus(e.message||'主密码错误'); break;
+        if (e.name==='AbortError'){ setStatus(t('status.cancelled')); break; }
+        if (e.name === 'AuthError' || isMasterPasswordErrorMessage(e.message) || isUnsupportedCipherErrorMessage(e.message)){
+          setStatus(e.message||t('status.authMasterPassword')); break;
         }
         if (attempt < maxRetries && !/AuthError|ConfigError/.test(e.name)){
-          attempt++; setStatus(`失败(${e.name}) 重试 ${attempt}/${maxRetries}`); continue;
-        } else { setStatus(e.message||'翻译失败'); break; }
+          attempt++; setStatus(t('status.retrying', { name: e.name, count: attempt, max: maxRetries })); continue;
+        } else { setStatus(e.message||t('status.translateFailed')); break; }
       } finally { /* loop end */ }
     }
-    streaming = false; resetButton();
+    streaming = false; currentAbort=null; resetButton();
     return;
   }
   // 流式路径
@@ -585,27 +602,27 @@ async function doTranslate(){
       }
   if (buffer.pending){ outputRaw += buffer.pending; buffer.pending=''; renderMarkdown(outputRaw); }
       const ms = Math.round(performance.now()-start);
-  setStatus(`完成 ${ms}ms | ≈in:${inTokCached} / prompt:${promptTokCached} token` + (attempt?` | 重试${attempt}`:''));
+  setStatus(t('status.done', { ms, inTokens: inTokCached, promptTokens: promptTokCached, retry: attempt ? t('status.retrySuffix', { count: attempt }) : '' }));
       break;
     } catch(e){
-      if (e.name === 'AbortError'){ setStatus('已取消'); break; }
-  if (/主密码错误|密文格式不支持/.test(e.message||'')) { setStatus(e.message||'主密码错误'); break; }
+      if (e.name === 'AbortError'){ setStatus(t('status.cancelled')); break; }
+  if (e.name === 'AuthError' || isMasterPasswordErrorMessage(e.message) || isUnsupportedCipherErrorMessage(e.message)) { setStatus(e.message||t('status.authMasterPassword')); break; }
       if (!produced && attempt < maxRetries && !/AuthError|ConfigError/.test(e.name)){
-        attempt++; setStatus(`失败(${e.name}) 重试 ${attempt}/${maxRetries}`); continue;
+        attempt++; setStatus(t('status.retrying', { name: e.name, count: attempt, max: maxRetries })); continue;
       } 
       // 回退：若仍未产出任何增量，尝试非流式一次
       if (!produced){
         try {
-          setStatus('流式失败，回退非流式...');
+          setStatus(t('status.streamFallback'));
           const result = await translateOnce(text,{ targetLanguage: langSelect.value, images });
           outputRaw = result;
           renderMarkdown(outputRaw);
           // 不再持久化输出
           const ms = Math.round(performance.now()-start);
-          setStatus(`回退完成 ${ms}ms | ≈in:${inTokCached} / prompt:${promptTokCached} token`);
-        } catch(e2){ setStatus(e.message||'流式失败'); }
+          setStatus(t('status.fallbackDone', { ms, inTokens: inTokCached, promptTokens: promptTokCached }));
+        } catch(e2){ setStatus(e.message||t('status.streamFailed')); }
       } else {
-        setStatus(e.message||'流式失败');
+        setStatus(e.message||t('status.streamFailed'));
       }
       break;
     }
@@ -618,13 +635,99 @@ function cancelStream(){
 }
 
 function resetButton(){
-  btnTranslate.textContent = '翻译 (Ctrl+Enter)';
+  setTranslateButtonMode(false);
   btnTranslate.classList.remove('danger');
 }
 
+let externalTranslateTimer = null;
+function scheduleExternalTranslate(){
+  clearTimeout(externalTranslateTimer);
+  const run = ()=>{
+    externalTranslateTimer = null;
+    if (streaming){
+      externalTranslateTimer = setTimeout(run, 80);
+      return;
+    }
+    doTranslate();
+  };
+  externalTranslateTimer = setTimeout(run, 0);
+}
+
+function compactSourceTitle(value){
+  const title = String(value || '').trim();
+  if (!title) return '';
+  return title.length > 40 ? `${title.slice(0, 40)}...` : title;
+}
+
+function makeExternalInput(detail){
+  const text = String(detail.text || '');
+  const html = String(detail.html || '').trim();
+  if (getPasteMode() === 'markdown'){
+    if (html){
+      const markdown = turndown.turndown(html).trim();
+      if (markdown) return { text: markdown, note: t('status.htmlToMarkdown') };
+    }
+    const mdFromTsv = tsvToMarkdownIfTable(text);
+    if (mdFromTsv) return { text: mdFromTsv, note: t('status.tsvToMarkdown') };
+  }
+  return { text: text.trim(), note: '' };
+}
+
+function normalizeExternalImages(images){
+  if (!Array.isArray(images)) return [];
+  const accepted = [];
+  for (const img of images){
+    const dataUrl = String(img?.dataUrl || '');
+    const meta = dataUrlToMeta(dataUrl);
+    if (!meta) continue;
+    const size = Number(img.size || meta.size || 0);
+    if (size > MAX_IMAGE_BYTES) continue;
+    accepted.push({
+      name: makeImageName(img.name),
+      type: img.type || meta.type,
+      size,
+      dataUrl
+    });
+    if (accepted.length >= MAX_IMAGE_COUNT) break;
+  }
+  return accepted;
+}
+
+window.addEventListener('ai-tr:external-input', event=>{
+  const detail = event.detail || {};
+  if (detail.error){
+    setStatus(String(detail.error));
+    return;
+  }
+  const input = makeExternalInput(detail);
+  const images = normalizeExternalImages(detail.images);
+  const text = input.text;
+  if (!text && !images.length) return;
+  if (text.length > MAX_INPUT_CHARS){
+    setStatus(t('status.selectedTooLarge', { max: MAX_INPUT_CHARS.toLocaleString() }));
+    return;
+  }
+
+  clearTimeout(externalTranslateTimer);
+  if (streaming) cancelStream();
+
+  setInputText(text);
+  outputRaw='';
+  renderMarkdown('');
+  imageAttachments=images;
+  renderImageList();
+
+  const title = compactSourceTitle(detail.sourceTitle);
+  const loadedSubject = images.length && !text ? t('status.externalLoadedImage') : t('status.externalLoadedText');
+  const loaded = title ? `${loadedSubject}${t('text.titleSeparator')}${title}` : loadedSubject;
+  const prefix = input.note ? `${input.note}${t('text.detailSeparator')}${loaded}` : loaded;
+  setStatus(detail.autoTranslate === false ? prefix : t('status.prepareTranslate', { text: prefix }));
+  if (detail.autoTranslate !== false) scheduleExternalTranslate();
+});
+
 btnTranslate.addEventListener('click', doTranslate);
-btnClear.addEventListener('click', ()=>{ setInputText(''); outputRaw=''; renderMarkdown(''); imageAttachments=[]; renderImageList(); setStatus('已清空'); inputEditor.focus(); });
-btnCopy.addEventListener('click', async()=>{ if (!outputRaw) return; const ok = await copyToClipboard(outputRaw); setStatus(ok?'已复制':'复制失败'); });
+btnClear.addEventListener('click', ()=>{ setInputText(''); outputRaw=''; renderMarkdown(''); imageAttachments=[]; renderImageList(); setStatus(t('status.cleared')); inputEditor.focus(); });
+btnCopy.addEventListener('click', async()=>{ if (!outputRaw) return; const ok = await copyToClipboard(outputRaw); setStatus(ok?t('status.copied'):t('status.copyFailed')); });
 outputView.addEventListener('keydown', e=>{
   if ((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='a'){
     e.preventDefault();
@@ -655,13 +758,13 @@ inputEl.addEventListener('drop', async e=>{
   if (imageFiles.length || dataUrlImages.length){
     e.stopPropagation();
     e.stopImmediatePropagation?.();
-    if (imageFiles.length){ await addImagesFromFiles(imageFiles, '拖拽'); }
-    if (dataUrlImages.length){ await addImagesFromDataUrls(dataUrlImages, '拖拽'); }
+    if (imageFiles.length){ await addImagesFromFiles(imageFiles, t('source.drag')); }
+    if (dataUrlImages.length){ await addImagesFromDataUrls(dataUrlImages, t('source.drag')); }
   }
   if (nonImageFiles.length){
     const f = nonImageFiles[0];
     if (f.size > MAX_FILE_BYTES){
-      setStatus(`文件过大（${humanMiB(f.size)} MiB），上限 ${humanMiB(MAX_FILE_BYTES)} MiB`);
+      setStatus(t('status.fileTooLarge', { size: humanMiB(f.size), max: humanMiB(MAX_FILE_BYTES) }));
       return;
     }
     if (
@@ -676,16 +779,16 @@ inputEl.addEventListener('drop', async e=>{
       reader.onload = ()=>{
         const content = reader.result || '';
         if (content.length > MAX_INPUT_CHARS){
-          setStatus(`文件内容过大（>${MAX_INPUT_CHARS.toLocaleString()} 字符），请分段处理`);
+          setStatus(t('status.fileContentTooLarge', { max: MAX_INPUT_CHARS.toLocaleString() }));
           return;
         }
         setInputText('');
         outputRaw = '';
         renderMarkdown('');
-        setInputText(content); setStatus('文件已载入'); };
+        setInputText(content); setStatus(t('status.fileLoaded')); };
       reader.readAsText(f);
     } else {
-      setStatus('仅支持 .txt / .md');
+      setStatus(t('status.unsupportedFile'));
     }
     return;
   }
@@ -698,21 +801,21 @@ inputEl.addEventListener('drop', async e=>{
   if (mode==='markdown'){
     const md = dt.getData('text/markdown');
     if (md){
-      if (md.length > MAX_INPUT_CHARS){ setStatus(`内容过大（>${MAX_INPUT_CHARS.toLocaleString()} 字符）`); return; }
-      setInputText(md); setStatus('Markdown 已载入'); return; }
+      if (md.length > MAX_INPUT_CHARS){ setStatus(t('status.contentTooLarge', { max: MAX_INPUT_CHARS.toLocaleString() })); return; }
+      setInputText(md); setStatus(t('status.markdownLoaded')); return; }
     const html = dt.getData('text/html');
     if (html){
       const md2 = turndown.turndown(html);
-      if (md2.length > MAX_INPUT_CHARS){ setStatus(`内容过大（>${MAX_INPUT_CHARS.toLocaleString()} 字符）`); return; }
-      setInputText(md2); setStatus('HTML 已转换为 Markdown'); return; }
+      if (md2.length > MAX_INPUT_CHARS){ setStatus(t('status.contentTooLarge', { max: MAX_INPUT_CHARS.toLocaleString() })); return; }
+      setInputText(md2); setStatus(t('status.htmlToMarkdown')); return; }
   const mdFromTsv = tsvToMarkdownIfTable(text);
   if (mdFromTsv){
-    if (mdFromTsv.length > MAX_INPUT_CHARS){ setStatus(`内容过大（>${MAX_INPUT_CHARS.toLocaleString()} 字符）`); return; }
-    setInputText(mdFromTsv); setStatus('检测到表格 (TSV) · 已转换为 Markdown'); return; }
+    if (mdFromTsv.length > MAX_INPUT_CHARS){ setStatus(t('status.contentTooLarge', { max: MAX_INPUT_CHARS.toLocaleString() })); return; }
+    setInputText(mdFromTsv); setStatus(t('status.tsvToMarkdown')); return; }
   }
   if (text){
-    if (text.length > MAX_INPUT_CHARS){ setStatus(`内容过大（>${MAX_INPUT_CHARS.toLocaleString()} 字符）`); return; }
-    setInputText(text); setStatus('文本已载入'); }
+    if (text.length > MAX_INPUT_CHARS){ setStatus(t('status.contentTooLarge', { max: MAX_INPUT_CHARS.toLocaleString() })); return; }
+    setInputText(text); setStatus(t('status.textLoaded')); }
 }, true);
 
 inputEl.addEventListener('paste', async e=>{
@@ -721,67 +824,271 @@ inputEl.addEventListener('paste', async e=>{
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation?.();
-    if (files.length){ await addImagesFromFiles(files, '粘贴'); }
-    else { await addImagesFromDataUrls(dataUrlImages, '粘贴'); }
+    if (files.length){ await addImagesFromFiles(files, t('source.paste')); }
+    else { await addImagesFromDataUrls(dataUrlImages, t('source.paste')); }
     return;
   }
 }, true);
 
 btnAddImage?.addEventListener('click', ()=>{
-  if (!isVisionEnabled()){ setStatus('当前服务未启用视觉，无法上传图片'); return; }
+  if (!isVisionEnabled()){ setStatus(t('status.visionDisabledUpload')); return; }
   imagePicker?.click();
 });
 
 imagePicker?.addEventListener('change', ()=>{
   const files = Array.from(imagePicker.files||[]);
-  if (files.length){ addImagesFromFiles(files, '选择'); }
+  if (files.length){ addImagesFromFiles(files, t('source.select')); }
   if (imagePicker) imagePicker.value = '';
 });
 
-// 全屏切换逻辑
-document.querySelectorAll('.btn-expand').forEach(btn => {
-  let escHandler = null; // 存储当前按钮的 ESC 处理器引用
-  
-  btn.addEventListener('click', (e) => {
-    const pane = btn.closest('.pane');
-    if (!pane) return;
-    const isFull = pane.classList.toggle('fullscreen');
-    
-    // 切换图标
-    const iconExpand = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
-    const iconCompress = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/></svg>';
-    btn.innerHTML = isFull ? iconCompress : iconExpand;
-    btn.title = isFull ? '退出全屏' : '全屏';
-    btn.setAttribute('aria-label', btn.title);
+const PANE_SPLIT_KEY = 'AI_TR_PANE_SPLIT';
+const PANE_COLLAPSED_KEY = 'AI_TR_PANE_COLLAPSED';
+const PANE_SPLIT_MIN = 20;
+const PANE_SPLIT_MAX = 80;
+const panesEl = document.querySelector('.panes');
+const paneDivider = document.getElementById('paneDivider');
+const paneInput = document.getElementById('paneInput');
+const paneOutput = document.getElementById('paneOutput');
+const paneMedia = window.matchMedia('(max-width: 900px)');
 
-    // 如果是全屏，监听 Esc 退出
-    if (isFull) {
-      escHandler = (ev) => {
-        if (ev.key === 'Escape') {
-          pane.classList.remove('fullscreen');
-          btn.innerHTML = iconExpand;
-          btn.title = '全屏';
-          btn.setAttribute('aria-label', btn.title);
-          window.removeEventListener('keydown', escHandler);
-          escHandler = null;
-        }
-      };
-      window.addEventListener('keydown', escHandler);
-    } else {
-      // 退出全屏时，移除 ESC 处理器（如果存在）
-      if (escHandler) {
-        window.removeEventListener('keydown', escHandler);
-        escHandler = null;
-      }
-    }
+const iconFullscreen = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
+const iconExitFullscreen = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/></svg>';
+
+function clampPaneSplit(value){
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 50;
+  return Math.min(PANE_SPLIT_MAX, Math.max(PANE_SPLIT_MIN, number));
+}
+
+function readPaneSplit(){
+  try {
+    const value = localStorage.getItem(PANE_SPLIT_KEY);
+    return value == null || value === '' ? 50 : clampPaneSplit(value);
+  } catch {
+    return 50;
+  }
+}
+
+function readCollapsedPane(){
+  try {
+    const value = localStorage.getItem(PANE_COLLAPSED_KEY);
+    return value === 'input' || value === 'output' ? value : '';
+  } catch {
+    return '';
+  }
+}
+
+let paneSplit = readPaneSplit();
+let collapsedPane = readCollapsedPane();
+const fullscreenEscHandlers = new WeakMap();
+
+function isPaneStacked(){
+  return paneMedia.matches;
+}
+
+function getPaneByName(name){
+  if (name === 'input') return paneInput;
+  if (name === 'output') return paneOutput;
+  return null;
+}
+
+function getPaneLabel(name){
+  return t(name === 'input' ? 'pane.input' : 'pane.output');
+}
+
+function getPaneToggleIcon(name, isCollapsed){
+  const stacked = isPaneStacked();
+  if (stacked){
+    const collapseUp = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>';
+    const collapseDown = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+    if (name === 'input') return isCollapsed ? collapseDown : collapseUp;
+    return isCollapsed ? collapseUp : collapseDown;
+  }
+  const collapseLeft = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
+  const collapseRight = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>';
+  if (name === 'input') return isCollapsed ? collapseRight : collapseLeft;
+  return isCollapsed ? collapseLeft : collapseRight;
+}
+
+function updatePaneToggleButton(btn){
+  const name = btn.dataset.paneTarget;
+  const isCollapsed = collapsedPane === name;
+  const title = t(isCollapsed ? 'action.expandPaneNamed' : 'action.collapsePaneNamed', { pane: getPaneLabel(name) });
+  btn.innerHTML = getPaneToggleIcon(name, isCollapsed);
+  btn.title = title;
+  btn.setAttribute('aria-label', title);
+  btn.setAttribute('aria-expanded', String(!isCollapsed));
+}
+
+function setExpandButtonState(btn, isFullscreen){
+  btn.innerHTML = isFullscreen ? iconExitFullscreen : iconFullscreen;
+  btn.title = isFullscreen ? t('action.expandPaneToggle') : t('action.expandPane');
+  btn.setAttribute('aria-label', btn.title);
+  btn.setAttribute('aria-pressed', String(isFullscreen));
+}
+
+function exitPaneFullscreen(pane){
+  if (!pane?.classList.contains('fullscreen')) return;
+  pane.classList.remove('fullscreen');
+  const btn = pane.querySelector('.btn-expand');
+  if (btn) setExpandButtonState(btn, false);
+  const handler = fullscreenEscHandlers.get(pane);
+  if (handler) window.removeEventListener('keydown', handler);
+  fullscreenEscHandlers.delete(pane);
+}
+
+function exitAllPaneFullscreen(){
+  document.querySelectorAll('.pane.fullscreen').forEach(pane=>exitPaneFullscreen(pane));
+}
+
+function setPaneSplit(value, { persist=true }={}){
+  paneSplit = clampPaneSplit(value);
+  if (panesEl) panesEl.style.setProperty('--pane-split-size', `${paneSplit.toFixed(2)}%`);
+  if (paneDivider) paneDivider.setAttribute('aria-valuenow', String(Math.round(paneSplit)));
+  if (persist) {
+    try { localStorage.setItem(PANE_SPLIT_KEY, paneSplit.toFixed(2)); } catch {}
+  }
+}
+
+function setCollapsedPane(next, { persist=true }={}){
+  collapsedPane = next === 'input' || next === 'output' ? next : '';
+  panesEl?.setAttribute('data-pane-collapsed', collapsedPane);
+  paneInput?.classList.toggle('is-collapsed', collapsedPane === 'input');
+  paneOutput?.classList.toggle('is-collapsed', collapsedPane === 'output');
+  document.querySelectorAll('.btn-pane-toggle').forEach(updatePaneToggleButton);
+  if (persist) {
+    try {
+      if (collapsedPane) localStorage.setItem(PANE_COLLAPSED_KEY, collapsedPane);
+      else localStorage.removeItem(PANE_COLLAPSED_KEY);
+    } catch {}
+  }
+}
+
+function updatePaneOrientation(){
+  if (!paneDivider) return;
+  paneDivider.setAttribute('aria-orientation', isPaneStacked() ? 'horizontal' : 'vertical');
+  document.querySelectorAll('.btn-pane-toggle').forEach(updatePaneToggleButton);
+}
+
+function getSplitFromPointer(event){
+  const rect = panesEl?.getBoundingClientRect();
+  if (!rect) return paneSplit;
+  const stacked = isPaneStacked();
+  const size = stacked ? rect.height : rect.width;
+  if (size <= 0) return paneSplit;
+  const offset = stacked ? event.clientY - rect.top : event.clientX - rect.left;
+  return (offset / size) * 100;
+}
+
+function bindPaneResize(){
+  if (!panesEl || !paneDivider) return;
+  paneDivider.addEventListener('pointerdown', event=>{
+    event.preventDefault();
+    exitAllPaneFullscreen();
+    if (collapsedPane) setCollapsedPane('');
+    panesEl.classList.add('is-resizing');
+    paneDivider.setPointerCapture?.(event.pointerId);
+    setPaneSplit(getSplitFromPointer(event));
+
+    const onMove = moveEvent=>{
+      moveEvent.preventDefault();
+      setPaneSplit(getSplitFromPointer(moveEvent));
+    };
+    const onEnd = ()=>{
+      panesEl.classList.remove('is-resizing');
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onEnd);
+      window.removeEventListener('pointercancel', onEnd);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('pointercancel', onEnd);
   });
-});
+
+  paneDivider.addEventListener('keydown', event=>{
+    let next = paneSplit;
+    const step = event.shiftKey ? 10 : 5;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next -= step;
+    else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next += step;
+    else if (event.key === 'Home') next = PANE_SPLIT_MIN;
+    else if (event.key === 'End') next = PANE_SPLIT_MAX;
+    else if (event.key === 'Enter') next = 50;
+    else return;
+
+    event.preventDefault();
+    if (collapsedPane) setCollapsedPane('');
+    setPaneSplit(next);
+  });
+}
+
+function bindPaneCollapse(){
+  panesEl?.addEventListener('click', event=>{
+    const btn = event.target.closest?.('.btn-pane-toggle');
+    if (!btn || !panesEl.contains(btn)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const name = btn.dataset.paneTarget;
+    if (!getPaneByName(name)) return;
+    exitAllPaneFullscreen();
+    setCollapsedPane(collapsedPane === name ? '' : name);
+  });
+
+  [
+    [paneInput, 'input'],
+    [paneOutput, 'output']
+  ].forEach(([pane, name])=>{
+    pane?.addEventListener('click', event=>{
+      if (collapsedPane !== name) return;
+      if (event.target.closest('button')) return;
+      setCollapsedPane('');
+    });
+  });
+}
+
+function bindPaneFullscreen(){
+  document.querySelectorAll('.btn-expand').forEach(btn => {
+    setExpandButtonState(btn, false);
+    btn.addEventListener('click', () => {
+      const pane = btn.closest('.pane');
+      if (!pane || pane.classList.contains('is-collapsed')) return;
+      const willFullscreen = !pane.classList.contains('fullscreen');
+      exitAllPaneFullscreen();
+
+      if (willFullscreen) {
+        pane.classList.add('fullscreen');
+        setExpandButtonState(btn, true);
+        const escHandler = ev=>{
+          if (ev.key === 'Escape') exitPaneFullscreen(pane);
+        };
+        fullscreenEscHandlers.set(pane, escHandler);
+        window.addEventListener('keydown', escHandler);
+      } else {
+        setExpandButtonState(btn, false);
+      }
+    });
+  });
+}
+
+function initPaneLayout(){
+  setPaneSplit(paneSplit, { persist:false });
+  setCollapsedPane(collapsedPane, { persist:false });
+  updatePaneOrientation();
+  bindPaneResize();
+  bindPaneCollapse();
+  bindPaneFullscreen();
+  if (typeof paneMedia.addEventListener === 'function'){
+    paneMedia.addEventListener('change', updatePaneOrientation);
+  } else if (typeof paneMedia.addListener === 'function'){
+    paneMedia.addListener(updatePaneOrientation);
+  }
+}
 
 // 使用 Quill Clipboard 模块处理粘贴
 clipboard.onPaste = (range, { text, html }) => {
 
   const mode = getPasteMode();
-  let statusMsg = '已粘贴文本';
+  let statusMsg = t('status.pastedText');
   let processedText = "";
   outputRaw = "";
   renderMarkdown('');
@@ -789,12 +1096,12 @@ clipboard.onPaste = (range, { text, html }) => {
   if (mode === 'markdown') {
     if (html && html.trim()) {
       processedText = turndown.turndown(html);
-      statusMsg = '已从 HTML 转 Markdown';
+      statusMsg = t('status.htmlPasteToMarkdown');
     } else {
       const mdFromTsv = tsvToMarkdownIfTable(text);
       if (mdFromTsv) {
         processedText = mdFromTsv;
-        statusMsg = '检测到表格 (TSV) · 已转换为 Markdown';
+        statusMsg = t('status.tsvToMarkdown');
       }
     }
   }
@@ -802,7 +1109,7 @@ clipboard.onPaste = (range, { text, html }) => {
   // 尺寸校验：processedText（若有）或原始 text
   const finalText = processedText || text || '';
   if (finalText.length > MAX_INPUT_CHARS){
-    setStatus(`粘贴内容过大（>${MAX_INPUT_CHARS.toLocaleString()} 字符），已取消插入`);
+    setStatus(t('status.pasteTooLarge', { max: MAX_INPUT_CHARS.toLocaleString() }));
     return;
   }
 
@@ -817,7 +1124,9 @@ clipboard.onPaste = (range, { text, html }) => {
 
 
 (function init(){
+  applyI18n();
   const cfg = loadConfig();
+  outputView.dataset.placeholder = t('placeholder.output');
   populateLangs(cfg);
   populateServices(cfg);
   populatePrompts(cfg);
@@ -825,6 +1134,7 @@ clipboard.onPaste = (range, { text, html }) => {
   refreshVisionState();
   // 不再恢复上次输入/输出
   bindPasteToggle();
+  initPaneLayout();
 })();
 
 // 输入监听持久化（节流）

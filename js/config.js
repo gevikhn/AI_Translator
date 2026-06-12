@@ -1,8 +1,9 @@
 // config.js
 // 负责：配置数据结构、默认值、加载/保存、校验、加解密 & 迁移（支持多服务配置）
+import { getDefaultTargetLanguage, isMasterPasswordErrorMessage, isUnsupportedCipherErrorMessage, t as i18nT } from './i18n.js';
 
 const STORAGE_KEY = 'AI_TR_CFG';
-const CONFIG_VERSION = 3;
+const CONFIG_VERSION = 4;
 const LEGACY_KEYS = ['AI_TR_CFG_V1'];
 export const DEFAULT_OPENAI_MODEL = 'gpt-5.5';
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-7';
@@ -23,12 +24,12 @@ export function isDefaultModelValue(model){
 }
 
 /** 默认 Prompt 模板（异步加载外部文件后回填） */
-export let DEFAULT_PROMPT_TEMPLATE = `加载中...`;
+export let DEFAULT_PROMPT_TEMPLATE = i18nT('text.loading');
 fetch('./default.prompt')
   .then(r=>r.text())
-  .then(t=>{
-    if (t && DEFAULT_PROMPT_TEMPLATE==='加载中...'){
-      DEFAULT_PROMPT_TEMPLATE = t.trim();
+  .then(promptText=>{
+    if (promptText && DEFAULT_PROMPT_TEMPLATE===i18nT('text.loading')){
+      DEFAULT_PROMPT_TEMPLATE = promptText.trim();
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw){
@@ -49,7 +50,7 @@ const defaultConfig = {
   version: CONFIG_VERSION,
   // 全局
   masterPasswordEnc: '',
-  targetLanguage: 'zh-CN',
+  targetLanguage: getDefaultTargetLanguage(),
   stream: true,
   temperature: 0,
   timeoutMs: 30000,
@@ -62,7 +63,7 @@ const defaultConfig = {
   services: [
     {
       id: 'svc-1',
-      name: '默认服务',
+      name: i18nT('service.defaultName'),
       apiType: 'openai-responses', // openai-responses | openai-chat | claude
       baseUrl: 'https://api.openai.com/v1',
       apiKeyEnc: '',
@@ -78,7 +79,7 @@ const defaultConfig = {
   prompts: [
     {
       id: 'p-1',
-      name: '默认 Prompt',
+      name: i18nT('prompt.defaultName'),
       template: DEFAULT_PROMPT_TEMPLATE
     }
   ],
@@ -134,7 +135,7 @@ function normalizeServices(arr){
   return list.map((s,idx)=>{
     const out = { ...s };
     if (!out.id) out.id = `svc-${idx+1}`;
-    if (!out.name) out.name = `服务${idx+1}`;
+    if (!out.name) out.name = i18nT('service.newName', { index: idx+1 });
     if (!out.apiType) out.apiType = 'openai-responses';
     if (out.apiType === 'openai') out.apiType = 'openai-responses';
     if (!out.baseUrl) out.baseUrl = 'https://api.openai.com/v1';
@@ -158,8 +159,8 @@ function normalizePrompts(arr){
   return list.map((p,idx)=>{
     const out = { ...p };
     if (!out.id) out.id = `p-${idx+1}`;
-    if (!out.name) out.name = `Prompt${idx+1}`;
-    if (!out.template || out.template === '加载中...') out.template = DEFAULT_PROMPT_TEMPLATE;
+    if (!out.name) out.name = i18nT('prompt.newName', { index: idx+1 });
+    if (!out.template || out.template === i18nT('text.loading')) out.template = DEFAULT_PROMPT_TEMPLATE;
     return out;
   });
 }
@@ -169,7 +170,7 @@ function migrateToMultiServices(dataIn){
   const data = { ...dataIn };
   const service = {
     id: 'svc-1',
-    name: '默认服务',
+    name: i18nT('service.defaultName'),
     apiType: data.apiType || 'openai-responses',
     baseUrl: data.baseUrl || 'https://api.openai.com/v1',
     apiKeyEnc: data.apiKeyEnc || '',
@@ -210,10 +211,13 @@ export function migrateConfig(dataIn){
   delete data.maxTokens;
   delete data.storeResponses;
   if (ver < 2){
-    const tpl = data.promptTemplate && data.promptTemplate !== '加载中...' ? data.promptTemplate : DEFAULT_PROMPT_TEMPLATE;
-    data.prompts = [{ id:'p-1', name:'默认 Prompt', template: tpl }];
+    const tpl = data.promptTemplate && data.promptTemplate !== i18nT('text.loading') ? data.promptTemplate : DEFAULT_PROMPT_TEMPLATE;
+    data.prompts = [{ id:'p-1', name:i18nT('prompt.defaultName'), template: tpl }];
     data.activePromptId = 'p-1';
     delete data.promptTemplate;
+  }
+  if (ver < 4 && data.targetLanguage === 'zh-CN' && getDefaultTargetLanguage() !== 'zh-CN'){
+    data.targetLanguage = getDefaultTargetLanguage();
   }
   data.services = normalizeServices(data.services);
   data.version = CONFIG_VERSION;
@@ -236,7 +240,7 @@ export function loadConfig(){
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
       for (const k of LEGACY_KEYS){ try { localStorage.removeItem(k); } catch {} }
     } catch(e){
-      alert('配置数据不兼容，请清除数据');
+      alert(i18nT('config.incompatible'));
       throw e;
     }
     data.services = normalizeServices(data.services);
@@ -332,9 +336,9 @@ export function setActivePrompt(id){
 export function validateConfig(cfg){
   const svc = getActiveService(cfg);
   const errors = [];
-  if (!svc.baseUrl) errors.push('Base URL 不能为空');
-  if (!svc.model) errors.push('模型不能为空');
-  if (!svc.apiKeyEnc) errors.push('API Key 未设置');
+  if (!svc.baseUrl) errors.push(i18nT('config.baseUrlRequired'));
+  if (!svc.model) errors.push(i18nT('config.modelRequired'));
+  if (!svc.apiKeyEnc) errors.push(i18nT('config.apiKeyRequired'));
   return errors;
 }
 
@@ -370,7 +374,7 @@ export async function decryptApiKey(encValue, masterPassword, serviceId){
   let metaRaw = null;
   if (serviceId){ metaRaw = localStorage.getItem(serviceMetaKey(serviceId)); }
   if (!metaRaw){ metaRaw = localStorage.getItem(ENC_META_KEY); }
-  if (!metaRaw) throw new Error('缺少加密元数据');
+  if (!metaRaw) throw new Error(i18nT('config.missingEncryptMeta'));
   const { salt, nonce } = JSON.parse(metaRaw);
   const k = await deriveKey(mixed, new Uint8Array(salt));
   const bin = Uint8Array.from(atob(encValue), c=>c.charCodeAt(0));
@@ -378,12 +382,12 @@ export async function decryptApiKey(encValue, masterPassword, serviceId){
   try {
     const plainBuf = await crypto.subtle.decrypt({ name:'AES-GCM', iv: new Uint8Array(nonce) }, k, bin);
     decoded = new TextDecoder().decode(plainBuf);
-  } catch(e){ throw new Error('主密码不正确'); }
+  } catch(e){ throw new Error(i18nT('config.masterPasswordIncorrect')); }
   let obj;
-  try { obj = JSON.parse(decoded); } catch { throw new Error('密文格式不支持'); }
-  if (!(obj && obj.v===1 && obj.key && obj.chk)) throw new Error('密文格式不支持');
+  try { obj = JSON.parse(decoded); } catch { throw new Error(i18nT('config.unsupportedCipher')); }
+  if (!(obj && obj.v===1 && obj.key && obj.chk)) throw new Error(i18nT('config.unsupportedCipher'));
   const h = await sha256Hex(obj.key);
-  if (h.slice(0,10) !== obj.chk) throw new Error('主密码不正确');
+  if (h.slice(0,10) !== obj.chk) throw new Error(i18nT('config.masterPasswordIncorrect'));
   cachedPlainKey = obj.key;
   cachedPasswordTag = mixed;
   cachedKeyCipher = encValue;
@@ -416,15 +420,15 @@ export async function encryptMasterPassword(mp, opts={}){
 export async function decryptMasterPassword(enc){
   if (!enc) return '';
   if (cachedMasterPassword) return cachedMasterPassword;
-  const metaRaw = localStorage.getItem(MP_META_KEY); if (!metaRaw) throw new Error('主密码元数据缺失');
+  const metaRaw = localStorage.getItem(MP_META_KEY); if (!metaRaw) throw new Error(i18nT('config.masterPasswordMetaMissing'));
   const { salt, nonce } = JSON.parse(metaRaw);
   const k = await deriveStaticKey(new Uint8Array(salt));
   const bin = Uint8Array.from(atob(enc), c=>c.charCodeAt(0));
   let decoded;
-  try { const buf = await crypto.subtle.decrypt({ name:'AES-GCM', iv:new Uint8Array(nonce) }, k, bin); decoded = new TextDecoder().decode(buf); } catch { throw new Error('主密码数据损坏'); }
-  let obj; try { obj = JSON.parse(decoded); } catch { throw new Error('主密码数据损坏'); }
-  if (!(obj && obj.v===1 && obj.mp && obj.chk)) throw new Error('主密码数据损坏');
-  const h = await sha256Hex(obj.mp); if (h.slice(0,8)!==obj.chk) throw new Error('主密码数据损坏');
+  try { const buf = await crypto.subtle.decrypt({ name:'AES-GCM', iv:new Uint8Array(nonce) }, k, bin); decoded = new TextDecoder().decode(buf); } catch { throw new Error(i18nT('config.masterPasswordDataBroken')); }
+  let obj; try { obj = JSON.parse(decoded); } catch { throw new Error(i18nT('config.masterPasswordDataBroken')); }
+  if (!(obj && obj.v===1 && obj.mp && obj.chk)) throw new Error(i18nT('config.masterPasswordDataBroken'));
+  const h = await sha256Hex(obj.mp); if (h.slice(0,8)!==obj.chk) throw new Error(i18nT('config.masterPasswordDataBroken'));
   cachedMasterPassword = obj.mp; return obj.mp;
 }
 
@@ -449,19 +453,19 @@ export async function getApiKeyAuto(){
   let mp = '';
   if (cfg.masterPasswordEnc){
     try { mp = await getMasterPasswordPlain(); }
-    catch(e){ if (Date.now() - (window.__AI_TR_LAST_PW_ALERT||0) > 2000){ alert('主密码读取失败，请重新输入并保存'); window.__AI_TR_LAST_PW_ALERT = Date.now(); } throw e; }
+    catch(e){ if (Date.now() - (window.__AI_TR_LAST_PW_ALERT||0) > 2000){ alert(i18nT('config.masterPasswordReadFailed')); window.__AI_TR_LAST_PW_ALERT = Date.now(); } throw e; }
   }
   if (!window.__AI_TR_LAST_PW_ALERT) window.__AI_TR_LAST_PW_ALERT = 0;
   const now = Date.now();
   try {
     return await decryptApiKey(svc.apiKeyEnc, mp, svc.id);
   } catch(e){
-    if (/主密码不正确/.test(e.message)){
-      if (now - window.__AI_TR_LAST_PW_ALERT > 2000){ alert('主密码错误'); window.__AI_TR_LAST_PW_ALERT = now; }
+    if (isMasterPasswordErrorMessage(e.message)){
+      if (now - window.__AI_TR_LAST_PW_ALERT > 2000){ alert(i18nT('config.masterPasswordWrong')); window.__AI_TR_LAST_PW_ALERT = now; }
       throw e;
     }
-    if (/密文格式不支持/.test(e.message)){
-      if (now - window.__AI_TR_LAST_PW_ALERT > 2000){ alert('密文格式不支持，请重新输入并保存 API Key'); window.__AI_TR_LAST_PW_ALERT = now; }
+    if (isUnsupportedCipherErrorMessage(e.message)){
+      if (now - window.__AI_TR_LAST_PW_ALERT > 2000){ alert(i18nT('config.unsupportedCipherReset')); window.__AI_TR_LAST_PW_ALERT = now; }
       throw e;
     }
     throw e;
@@ -505,12 +509,12 @@ export function exportConfig(cfg, { safe=false } = {}){
 export async function importConfig(source){
   if (typeof source === 'string' || source instanceof URL){
     const resp = await fetch(String(source));
-    if (!resp.ok) throw new Error('网络请求失败: ' + resp.status);
+    if (!resp.ok) throw new Error(i18nT('config.importNetworkFailed', { status: resp.status }));
     const text = await resp.text();
     try {
       return JSON.parse(text);
     } catch (e) {
-      throw new Error('配置文件格式错误: ' + e.message);
+      throw new Error(i18nT('config.importInvalidJson', { message: e.message }));
     }
   }
   return new Promise((resolve, reject)=>{

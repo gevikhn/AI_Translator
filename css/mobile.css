@@ -15,22 +15,82 @@
   
   .controls-actions .main-actions { 
     display: grid; 
-    grid-template-columns: 1fr 1fr 1fr 1fr; 
+    grid-template-columns: repeat(5, 42px);
+    justify-content: start;
     gap: 8px; 
     margin-top: 0;
   }
+
+  .controls-actions #btnTranslate {
+    grid-column: span 2;
+  }
   
-  .controls-actions .btn { 
-    padding: 8px 2px; 
-    font-size: 13px; 
+  .controls-actions .command-btn { 
+    min-width: 0;
+    height: 42px;
+    min-height: 42px;
+    padding: 0;
     justify-content: center; 
     text-align: center;
+  }
+
+  .controls-actions .command-btn .btn-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .controls-actions #btnTranslate .btn-label {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    white-space: nowrap;
+    border: 0;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .controls-actions .command-btn .btn-icon {
+    display: inline-flex;
+  }
+
+  .controls-actions .command-btn .icon-cancel,
+  .controls-actions .command-btn.is-cancel .icon-translate {
+    display: none;
+  }
+
+  .controls-actions .command-btn.is-cancel .icon-cancel {
+    display: inline-flex;
+  }
+
+  .controls-actions .command-btn .btn-icon svg {
+    width: 20px;
+    height: 20px;
   }
   
   /* Adjust panes to ensure they take remaining height */
   .panes { 
     grid-template-columns: 1fr; 
-    grid-template-rows: 1fr 1fr; 
+    grid-template-rows: minmax(72px, var(--pane-split-size)) var(--pane-divider-size) minmax(72px, 1fr);
     height: auto; /* Let flex grow handle it */
+  }
+
+  .panes[data-pane-collapsed="input"] {
+    grid-template-columns: 1fr;
+    grid-template-rows: var(--pane-collapsed-size) var(--pane-divider-size) minmax(0, 1fr);
+  }
+
+  .panes[data-pane-collapsed="output"] {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) var(--pane-divider-size) var(--pane-collapsed-size);
   }
 }

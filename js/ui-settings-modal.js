@@ -1,5 +1,6 @@
 // ui-settings-modal.js - 设置模态控制与表单逻辑复用
 import { loadConfig, saveConfig, validateConfig, exportConfig, importConfig, DEFAULT_PROMPT_TEMPLATE, encryptApiKey, encryptMasterPassword, decryptMasterPassword, ENC_META_KEY, MP_META_KEY, decryptApiKey, getActiveService, getActivePrompt, getActiveConfig, setActiveService, setActivePrompt, getApiKeyAuto, migrateConfig, defaultModelForApiType } from './config.js';
+import { applyI18n, getTargetLanguageOptions, t } from './i18n.js';
 
 const overlay = document.getElementById('settingsOverlay');
 const openBtn = document.getElementById('openSettings');
@@ -87,12 +88,10 @@ const promptName = document.getElementById('promptName');
 const btnAddPrompt = document.getElementById('btnAddPrompt');
 const btnDelPrompt = document.getElementById('btnDelPrompt');
 
-const LANGS = [ ['zh-CN','中文'],['en','English'],['ja','日本語'],['ko','한국어'],['fr','Français'],['de','Deutsch'] ];
-
 function fillLanguages(select, cfg){
   if (!select) return;
   select.innerHTML='';
-  for (const [v,l] of LANGS){ const o=document.createElement('option'); o.value=v; o.textContent=l; if (cfg.targetLanguage===v) o.selected=true; select.appendChild(o);} }
+  for (const [v,l] of getTargetLanguageOptions()){ const o=document.createElement('option'); o.value=v; o.textContent=l; if (cfg.targetLanguage===v) o.selected=true; select.appendChild(o);} }
 
 let unlockedPlainKey = null; // 仅缓存当前服务的明文 Key
 const MASK = '******';
@@ -147,7 +146,7 @@ function loadIntoForm(){
   fillLanguages(form.querySelector('[data-field=targetLanguage]'), cfg);
   if (apiTypeField) apiTypeField.dataset.prevValue = svc.apiType || 'openai-responses';
   if (modelField) delete modelField.dataset.userEdited;
-  statusEl.textContent = '已加载';
+  statusEl.textContent = t('status.loaded');
 }
 
 function open(){
@@ -229,7 +228,7 @@ form.addEventListener('submit', async e=>{
         const { enc, meta, metaKey } = await encryptApiKey(raw, newMasterPlain, svc.id, { returnMeta: true, skipStore: true });
         svc.apiKeyEnc = enc;
         stagedMetas.push({ metaKey, meta });
-      } catch(e){ statusEl.textContent='加密失败: '+e.message; return; }
+      } catch(e){ statusEl.textContent=t('status.encryptFailed', { message: e.message }); return; }
       unlockedPlainKey = raw;
     } else if (masterChanged && svc.apiKeyEnc){
       try {
@@ -238,7 +237,7 @@ form.addEventListener('submit', async e=>{
         svc.apiKeyEnc = enc;
         stagedMetas.push({ metaKey, meta });
         unlockedPlainKey = raw;
-      } catch { statusEl.textContent='主密码重加密失败'; return; }
+      } catch { statusEl.textContent=t('status.masterReencryptFailed'); return; }
     } else {
       const prevSvc = getActiveService(cfg);
       svc.apiKeyEnc = prevSvc.apiKeyEnc;
@@ -258,7 +257,7 @@ form.addEventListener('submit', async e=>{
         reencServices.push({ ...s, apiKeyEnc: enc });
         stagedMetas.push({ metaKey, meta });
       } catch {
-        statusEl.textContent='主密码重加密失败';
+        statusEl.textContent=t('status.masterReencryptFailed');
         return;
       }
     }
@@ -271,7 +270,7 @@ form.addEventListener('submit', async e=>{
         next.masterPasswordEnc = enc;
         stagedMasterMeta = meta;
       }
-      catch(e){ statusEl.textContent='主密码加密失败: '+e.message; return; }
+      catch(e){ statusEl.textContent=t('status.masterEncryptFailed', { message: e.message }); return; }
     } else {
       next.masterPasswordEnc = '';
       stagedMasterMeta = null;
@@ -314,7 +313,7 @@ form.addEventListener('submit', async e=>{
     }
     if (prevCfgRaw === null) localStorage.removeItem('AI_TR_CFG');
     else localStorage.setItem('AI_TR_CFG', prevCfgRaw);
-    statusEl.textContent='保存失败: '+e.message; return;
+    statusEl.textContent=t('status.saveFailed', { message: e.message }); return;
   }
   if (apiInput){
     apiInput.dataset.changed='0';
@@ -325,18 +324,18 @@ form.addEventListener('submit', async e=>{
     if (mp.dataset.raw) delete mp.dataset.raw;
     mp.value = next.masterPasswordEnc ? MASK : '';
   }
-  statusEl.textContent = '已保存';
+  statusEl.textContent = t('status.saved');
 });
 
 btnTest.addEventListener('click', async()=>{
-  statusEl.textContent='测试中...';
+  statusEl.textContent=t('status.testing');
   const cfg = getActiveConfig();
   try {
     const apiKey = await getApiKeyAuto();
     const resp = await fetch(cfg.baseUrl.replace(/\/$/,'') + '/models', { headers:{ 'Authorization':'Bearer '+apiKey }});
-    statusEl.textContent = resp.ok ? '连通成功 '+resp.status : '连通失败 '+resp.status;
+    statusEl.textContent = resp.ok ? t('status.testOk', { status: resp.status }) : t('status.testFailed', { status: resp.status });
   }
-  catch{ statusEl.textContent='网络错误'; }
+  catch{ statusEl.textContent=t('status.networkError'); }
 });
 btnExport.addEventListener('click', ()=> exportConfig(loadConfig()));
 btnExportSafe.addEventListener('click', ()=> exportConfig(loadConfig(), { safe:true }));
@@ -391,7 +390,7 @@ function getUrlByModal(){
 function getMasterPasswordByModal(){
   return new Promise((resolve, reject)=>{
     const onSubmit = (e)=>{ e.preventDefault(); const v = String(mpInputEl.value||'').trim(); if (!v){ mpInputEl.focus(); return; } resolve(v); cleanup(); };
-    const onCancel = ()=>{ reject(new Error('已取消')); cleanup(); };
+    const onCancel = ()=>{ reject(new Error(t('status.cancelledInline'))); cleanup(); };
     const onOverlay = (e)=>{ if (e.target===mpOverlay) { onCancel(); } };
     const onEsc = (e)=>{ if (e.key==='Escape') { onCancel(); } };
     function cleanup(){
@@ -424,11 +423,11 @@ async function applyImported(imported, prevCfgRaw, prevApiMeta, prevMpMeta){
     if (imported.__apiKeyMeta){ try { localStorage.setItem(ENC_META_KEY, JSON.stringify(imported.__apiKeyMeta)); } catch { /* ignore */ } }
     if (imported.masterPasswordEnc){
       let mp = await getMasterPasswordByModal();
-      try { const plainMp = await decryptMasterPassword(imported.masterPasswordEnc); if (plainMp !== mp){ throw new Error('主密码不匹配'); } } catch(e){ throw new Error('主密码验证失败'); }
+      try { const plainMp = await decryptMasterPassword(imported.masterPasswordEnc); if (plainMp !== mp){ throw new Error(t('status.masterPasswordMismatch')); } } catch(e){ throw new Error(t('status.masterPasswordVerifyFailed')); }
       if (Array.isArray(imported.services)){
-        for (const s of imported.services){ if (s.apiKeyEnc){ try { await decryptApiKey(s.apiKeyEnc, mp, s.id); } catch(e){ throw new Error(`服务 ${s.name||s.id} API Key 解密失败`); } } }
+        for (const s of imported.services){ if (s.apiKeyEnc){ try { await decryptApiKey(s.apiKeyEnc, mp, s.id); } catch(e){ throw new Error(t('status.serviceApiKeyDecryptFailed', { name: s.name||s.id })); } } }
       } else if (imported.apiKeyEnc){
-        try { await decryptApiKey(imported.apiKeyEnc, mp); } catch(e){ throw new Error('API Key 解密失败，可能主密码不正确'); }
+        try { await decryptApiKey(imported.apiKeyEnc, mp); } catch(e){ throw new Error(t('status.apiKeyDecryptFailed')); }
       }
     }
     delete imported.__apiKeyMeta; delete imported.__apiKeyMetaMap; delete imported.__masterPasswordMeta;
@@ -443,18 +442,18 @@ async function applyImported(imported, prevCfgRaw, prevApiMeta, prevMpMeta){
 }
 
 async function runImport(getImported, cleanup){
-  statusEl.textContent='导入中...';
+  statusEl.textContent=t('status.importing');
   const prevCfgRaw = localStorage.getItem('AI_TR_CFG');
   const prevApiMeta = localStorage.getItem(ENC_META_KEY);
   const prevMpMeta = localStorage.getItem(MP_META_KEY);
   let imported;
   try { imported = await getImported(); }
-  catch(e){ statusEl.textContent='导入失败: ' + (e.message||'数据读取错误'); if (cleanup) cleanup(); return; }
+  catch(e){ statusEl.textContent=t('status.importReadFailed', { message: e.message||t('status.readDataError') }); if (cleanup) cleanup(); return; }
   try {
     await applyImported(imported, prevCfgRaw, prevApiMeta, prevMpMeta);
-    statusEl.textContent='导入成功';
+    statusEl.textContent=t('status.importOk');
   } catch(e){
-    statusEl.textContent = '导入失败: ' + (e.message||'未知错误');
+    statusEl.textContent = t('status.importFailed', { message: e.message||t('status.unknownError') });
   } finally {
     if (cleanup) cleanup();
   }
@@ -470,7 +469,7 @@ btnImportUrl.addEventListener('click', async()=>{
   if (!input) return;
   let url;
   try { url = new URL(input.trim()); }
-  catch { statusEl.textContent='导入失败: URL 不合法'; return; }
+  catch { statusEl.textContent=t('status.importInvalidUrl'); return; }
   await runImport(()=> importConfig(url.toString()));
 });
 // 监听 API Key 输入变更标记
@@ -540,18 +539,18 @@ btnAddSvc?.addEventListener('click', ()=>{
   const cfg = loadConfig();
   const idx = (cfg.services||[]).length + 1;
   const id = `svc-${Date.now()}-${idx}`;
-  const base = { id, name:`服务${idx}`, apiType:'openai-responses', baseUrl:'https://api.openai.com/v1', apiKeyEnc:'', model: defaultModelForApiType('openai-responses'), vision: true, temperature: 0, maxOutputTokens: undefined };
+  const base = { id, name:t('service.newName', { index: idx }), apiType:'openai-responses', baseUrl:'https://api.openai.com/v1', apiKeyEnc:'', model: defaultModelForApiType('openai-responses'), vision: true, temperature: 0, maxOutputTokens: undefined };
   cfg.services = [...(cfg.services||[]), base];
   cfg.activeServiceId = id;
-  saveConfig(cfg); loadIntoForm(); statusEl.textContent = '已新增服务配置';
+  saveConfig(cfg); loadIntoForm(); statusEl.textContent = t('status.addedService');
 });
 btnDelSvc?.addEventListener('click', ()=>{
   const cfg = loadConfig();
-  if ((cfg.services||[]).length<=1){ statusEl.textContent='至少保留一个服务配置'; return; }
+  if ((cfg.services||[]).length<=1){ statusEl.textContent=t('status.keepOneService'); return; }
   const id = cfg.activeServiceId;
   cfg.services = (cfg.services||[]).filter(s=>s.id!==id);
   cfg.activeServiceId = cfg.services[0].id;
-  saveConfig(cfg); loadIntoForm(); unlockedPlainKey=null; statusEl.textContent='已删除当前服务配置';
+  saveConfig(cfg); loadIntoForm(); unlockedPlainKey=null; statusEl.textContent=t('status.deletedService');
 });
 
 // Prompt 切换/新增/删除
@@ -560,18 +559,19 @@ btnAddPrompt?.addEventListener('click', ()=>{
   const cfg = loadConfig();
   const idx = (cfg.prompts||[]).length + 1;
   const id = `p-${Date.now()}-${idx}`;
-  const base = { id, name:`Prompt${idx}`, template: DEFAULT_PROMPT_TEMPLATE };
+  const base = { id, name:t('prompt.newName', { index: idx }), template: DEFAULT_PROMPT_TEMPLATE };
   cfg.prompts = [...(cfg.prompts||[]), base];
   cfg.activePromptId = id;
-  saveConfig(cfg); loadIntoForm(); statusEl.textContent = '已新增 Prompt';
+  saveConfig(cfg); loadIntoForm(); statusEl.textContent = t('status.addedPrompt');
 });
 btnDelPrompt?.addEventListener('click', ()=>{
   const cfg = loadConfig();
-  if ((cfg.prompts||[]).length<=1){ statusEl.textContent='至少保留一个 Prompt'; return; }
+  if ((cfg.prompts||[]).length<=1){ statusEl.textContent=t('status.keepOnePrompt'); return; }
   const id = cfg.activePromptId;
   cfg.prompts = (cfg.prompts||[]).filter(p=>p.id!==id);
   cfg.activePromptId = cfg.prompts[0].id;
-  saveConfig(cfg); loadIntoForm(); statusEl.textContent='已删除当前 Prompt';
+  saveConfig(cfg); loadIntoForm(); statusEl.textContent=t('status.deletedPrompt');
 });
 
 // 首次不自动打开
+applyI18n();
