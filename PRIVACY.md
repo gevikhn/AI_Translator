@@ -1,7 +1,5 @@
 # 隐私权政策 / Privacy Policy
 
-## English
-
 This Privacy Policy applies to the AI Translator web app and Chrome extension. This project is designed for local use by default. It does not provide a project-owned proxy server, and it does not actively collect, upload, analyze, sell, or share user data.
 
 ### Data Collection
@@ -42,8 +40,7 @@ If this project adds data-processing capabilities that affect privacy in the fut
 
 Questions about this policy or the project's data handling can be submitted through the project repository's Issues or through contact methods provided by the maintainer.
 
-
-## 中文
+---
 
 本隐私权政策适用于 AI Translator 网页应用及其 Chrome 扩展。本项目以本地使用为默认原则，不提供项目自有的中转服务器，也不主动收集、上传、分析、出售或共享用户数据。
 
